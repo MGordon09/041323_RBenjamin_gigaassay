@@ -1,2 +1,7 @@
 Try umitools whitelist for barcode extraction rather than cutadapt as will record a csv with the barcode, associated reads and the number of times the barcode was detected (think it was 4 levinstein distance for ) 
 Maybe first use cutadapt as easier 
+
+Questions:
+- Why not remove duplicates?
+- Why merge reads prior to trimming adapters?
+
