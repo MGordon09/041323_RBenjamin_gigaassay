@@ -5,3 +5,6 @@ Questions:
 - Why not remove duplicates?
 - Why merge reads prior to trimming adapters?
 
+Outputs:
+- BBmerge merging ~80% of reads, 92% with flask, but maybe higher quality results?
+- less reads recovered in the umi-tools extract function (~10%)
