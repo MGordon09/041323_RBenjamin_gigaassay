@@ -6,7 +6,7 @@ import argparse
 import re
 
 
-#TODO 
+#TODO maybe trim final 32bp of reads from file or just do prior? maybe use cutadapt as optimised..
 #take gzipped files as input and process for increased speed
 
 def read_barcodes(barcode_path):
@@ -21,7 +21,7 @@ def match_barcode(read_seq, barcodes):
     for barcode_group, barcode_list in barcodes.items():
         for barcode in barcode_list:
             if read_seq[-32:].endswith(barcode):
-                return barcode_group
+                return barcode_group #, read_seq[:-len(barcode))]? trim final 32bp from reads?
     return "unknown"
 
 # def match_barcode(read_seq, barcodes):

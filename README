@@ -2,6 +2,7 @@ Try umitools whitelist for barcode extraction rather than cutadapt as will recor
 Maybe first use cutadapt as easier 
 
 Questions:
+- trim reads of final 32bp after barcode matching
 - Why not remove duplicates?
 - Why merge reads prior to trimming adapters?
 - Starcode cluster params
