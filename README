@@ -4,7 +4,11 @@ Maybe first use cutadapt as easier
 Questions:
 - Why not remove duplicates?
 - Why merge reads prior to trimming adapters?
+- Starcode cluster params
+- demultiplex script & how to handle I/O bottleneck from number of reads... could we just discard reads that don't match barcode? So much data as is..
+
 
 Outputs:
 - BBmerge merging ~80% of reads, 92% with flask, but maybe higher quality results?
 - less reads recovered in the umi-tools extract function (~10%)
+- Changes Levinstein distance to 4 so less clusters to cycle through

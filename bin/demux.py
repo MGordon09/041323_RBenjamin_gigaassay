@@ -4,7 +4,7 @@ import sys
 import os
 import argparse
 import re
-#import gzip
+
 
 #TODO 
 #take gzipped files as input and process for increased speed

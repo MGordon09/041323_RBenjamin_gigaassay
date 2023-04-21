@@ -10,7 +10,8 @@ params.tat_flank_5prime = "GAATTC"
 params.tat_flank_3prime = "GCGATCGC"
 params.umi_5prime = 'TGGATCCGGTACCGAGGAGATCTG'
 params.umi_3prime = 'GCGATCGC'
-params.l_distance = 2 // max maximum Levenshtein distance for starcode clustering 
+params.l_distance = 4 // max maximum Levenshtein distance for starcode clustering 
+params.scripts = "$projectDir/bin"
 // params.reference = 
 // params.multiqc = 
 // params.outdir = 
@@ -27,6 +28,29 @@ log.info """\
     clustering_distance_threshold : ${params.l_distance}
     """
     .stripIndent(true)
+
+
+/*
+ * index reference
+ */
+
+process BWA_MEM_INDEX {
+    tag "Indexing reference genome"
+    publishDir "${params.outdir}/preprocessing/subsample", mode: 'copy'
+
+    input:
+    path(fasta_ref)
+
+    output:
+    path(bwa_index)
+
+    script:
+    """
+    mkdir bwa
+    bwa index -a is -p bwa/${fasta.baseName} $fasta
+    """
+}
+
 
 
 /*
@@ -300,7 +324,7 @@ backup umi-tools extract with full lenght reads
 
 /*
  * merge files with barcodes, unzip & cluster
- * Levenshtein distance=4 to form clusters
+ * Levenshtein distance=2 to form clusters
  * Using spheres algorithm  intra-cluster dist<=4 (message passing builds by merging clusters)
  * Use seq-id in output to demultiplex input files based on barcode
 
@@ -316,7 +340,7 @@ process STARCODE_CLUSTERING {
     val l_distance
 
     output:
-    path("*clusters.txt")
+    path("*clusters.txt"), emit: clusters_file
     path("*clusters.log")
 
     script:
@@ -331,29 +355,40 @@ process STARCODE_CLUSTERING {
     """
  }
 
-/* process DEMULTIPLEX_BARCODES {
-    tag "Creating global clusters from UMI barcodes"
-    publishDir "${params.outdir}/clustering/starcode_reads", mode:'copy'
+/*
+ * take fastq files and demultiplex based on identified clusters in all samples
+ * output 1 file per sample per cluster in format: ${cluster}_${sample}.fastq
+ * input need to be decompressed; gzip after
+ */
+
+process DEMULTIPLEX_BARCODES {
+    tag "Demultiplex reads into files based on in sequence UMI barcodes"
+    publishDir "${params.outdir}/clustering/reads", mode:'copy'
 
     input:
     tuple val(sample_id), path(reads)
     path clusters_file
+    path scripts
 
     output:
-    
+    tuple val(sample_id), path("*.demux.fastq.gz"), emit: demux_reads
+    path("*demux.log")
+
+    script:
+    """
+    python $scripts/demux.py \
+    --fastq_path <(cat $reads |gzip -dc) \
+    --barcode_path ${clusters_file} \
+    --sample_name ${sample_id} \
+    --output_dir './'
+    > ${sample_id}_demux.log
+
+    #compress files
+    gzip *demux.fastq 
+    """
+}
 
 
-} */
-/* 
-    starcode \
-    --input merged_umi.fastq.gz \
-    --output starcode_umi_clusters.txt \
-    --sphere \
-    --dist $l_distance \
-    --non-redundant \
-    --seq-id \
-    2> starcode_umi_clusters.log
- */
 
 
 // The sequence reads are demultiplexed into subsets of read sequences for each cell clone based on UMI-barcode groups
@@ -423,6 +458,9 @@ workflow {
         .value(params.l_distance)
         .set { lev_dist_ch }
 
+    Channel
+        .fromPath(params.scripts)
+        .set { scripts_ch }
     //workflow
 
     read_input_ch    = SEQTK_SAMPLE(read_pairs_ch, sample_size_ch)
@@ -435,9 +473,9 @@ workflow {
     umi_h_reads_ch   = UMITOOLS_EXTRACT(trimmed_reads_ch.trimmed_reads, umi_5_ch)
     //umi_h_reads_ch   = UMITOOLS_EXTRACT(trimmed_reads_ch.trimmed_reads, umi_5_ch, umi_3_ch)
     //clustered_umi_ch = STARCODE_CLUSTERING(umi_reads_ch.umi_reads.flatten().collect(), lev_dist_ch)
-    umi_reads_ch.umi_reads.flatten().filter( ~/^\/.*\.fastq\.gz$/ ).collect().view()
+    //umi_reads_ch.umi_reads.flatten().filter( ~/^\/.*\.fastq\.gz$/ ).collect().view()
     clustered_umi_ch = STARCODE_CLUSTERING(umi_reads_ch.umi_reads.flatten().filter( ~/^\/.*\.fastq\.gz$/ ).collect(), lev_dist_ch) //flattens tuple & extracts elements ending in *.fastq.gz
-    
+    demux_reads_ch   = DEMULTIPLEX_BARCODES(trimmed_reads_ch.trimmed_reads,clustered_umi_ch.clusters_file,scripts_ch) 
     
     //umi_h_reads_ch   = UMITOOLS_EXTRACT(merge_reads_ch.merged_reads, umi_5_ch, umi_3_ch)
     //clusters_ch      = STARCODE_CLUSTERING(umi_reads_ch.)
