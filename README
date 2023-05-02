@@ -2,14 +2,25 @@ Try umitools whitelist for barcode extraction rather than cutadapt as will recor
 Maybe first use cutadapt as easier 
 
 Questions:
-- trim reads of final 32bp after barcode matching
-- Why not remove duplicates?
+- do you guys trim reads of final 32bp after barcode matching
+- Really in-depth sequencing.. Why not remove duplicates or maybe subsample to reduce runtime?
 - Why merge reads prior to trimming adapters?
 - Starcode cluster params
+- cluster then seperate? are these clusters genuine?
 - demultiplex script & how to handle I/O bottleneck from number of reads... could we just discard reads that don't match barcode? So much data as is..
-
+- Portion of read to use as reference (green only?) - shorter more efficient computationally
+- Need to find way to filter reads if the barcodes are shorter than 32bp before processing to speed up
 
 Outputs:
 - BBmerge merging ~80% of reads, 92% with flask, but maybe higher quality results?
 - less reads recovered in the umi-tools extract function (~10%)
 - Changes Levinstein distance to 4 so less clusters to cycle through
+
+
+Notes:
+- The Tat reference sequence includes the 32bp N for barcode matching
+- If demultiplexing, need to first combine all files and then demultiplex
+
+
+Demultiplexing step complete, but need to either i) cluster barcodes seperately or ii) combine the clustering & demultiplexing in one step
+For now cluster & demultiplex seperately. Can combine if required 
