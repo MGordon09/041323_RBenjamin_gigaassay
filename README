@@ -20,6 +20,8 @@ Outputs:
 Notes:
 - The Tat reference sequence includes the 32bp N for barcode matching
 - If demultiplexing, need to first combine all files and then demultiplex
+- pipeline took two hours to run with 10k reads for 3x samples... may need to drop some of the processes
+- instead of splitting files like this, could we add consensus barcode to read header and retain this information in bam file? if the samples are different, then we could call variants on the bam and just write to csv...
 
 
 Demultiplexing step complete, but need to either i) cluster barcodes seperately or ii) combine the clustering & demultiplexing in one step

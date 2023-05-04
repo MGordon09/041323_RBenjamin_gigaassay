@@ -1,20 +1,34 @@
 #!/usr/bin/env nextflow
 
-//TODO
-//Decouple demux/clustering
-//Decouple merging 
-// Revise BAM file readgroup processing
-// Add resource requirmenets per process
+
+/*
+========================================================================================
+                         nf-gigaassay
+========================================================================================
+ pipeline to call variants in data produced using the GigaAssay protocol 
+ doi: https://www.sciencedirect.com/science/article/pii/S0888754322001847
+ #### Homepage / Documentation
+ https://github.com/MGordon09/041323_RBenjamin_gigaassay
+----------------------------------------------------------------------------------------
+*/
+
+//# ######## TODO #############
+// big q: do we perform clustering after merging or not?
+// add SNPEff to annotate variants; first build viral db with *.gbk file (..check if it makes sense to do so..) and then annotate vcf and convert to tabular format with counts 
+// create singularity & conda env to run pipeline  on HPC
+// Add resource requirements per process
 //check which are symlinked and which are copied
-// Alignment, variant calling
+// after calling, need to merge variant calls
 // INspect length of umi fastq
 // Mark duplicates? Don't know if it will owrk on this data as standard w/o incorporating UMI information
+// output needs to be: sample cell-line gft-exp barcode variant call support(n reads Q. what does this mean when there are multiple? codon substitutions? are they all 100%?) codon_substitutions aa_substitutions n_codon substitions n_aa_substitutions
+//filtering: remove low-freq calls as should be present in all samples? either i) don't call below a certain fraction or ii) look at intersection of each barcode for all samples and only extract the correct one
+// To the vcf file, add HGVS.c and HGVS.p information
 
-// WOrkflow parameter definition
+// ####################### Default Parameter Settings #######################
 
-//params.reads =  "$projectDir/data/fastq/SRR*100000_{1,2}.fastq.gz"
 params.reads =  "$projectDir/data/fastq/SRR*_{1,2}.fastq.gz"
-params.subsample = 'FALSE' // use conditional in workflow execution
+params.skip_subsample = '' // use conditional in workflow execution
 params.samplesize = 0.1 // 0.1 random sample of raw file
 params.adapters = "$projectDir/docs/flanks.fa" // file with sequences to trim surrounding Tat contig
 params.tat_flank_5prime = "GAATTC"
@@ -26,6 +40,38 @@ params.scripts = "$projectDir/bin"
 params.reference = "$projectDir/docs/tat.fa"
 // params.multiqc = 
 // params.outdir = 
+
+
+
+def helpMessage() {
+
+    log.info nfcoreHeader()
+    log.info"""
+    Usage:
+    The typical command for running the pipeline is as follows:
+    nextflow run nf-gigaassay  -profile conda --reads 'path/to/*.fastq.gz' --skip_subsample
+    Mandatory arguments:
+      --reads [str]                 Full path to directory containing the input reads for analysis
+      -profile [str]                Configuration profile to use. Currently supports conda & singularity 
+                            
+    Options:
+      --skip_subsample [boolean]     For testing
+      --samplesize [int/float]       Number or proportion of reads to subsample
+      --l_distance [int]             Levenstein distance used for starcode clustering
+      --adapters [file]              Path to fasta for adapter sequences to be trimmed
+
+    References:
+      --reference [file]             Fasta file used to perform read alignment       
+      --adapter [file]               Path to fasta for adapter sequences to be trimmed
+    """.stripIndent()
+}
+
+// Show help message
+if (params.help) {
+    helpMessage()
+    exit 0
+}
+
 
 log.info """\
     G I G A A S S A Y   P I P E L I N E
@@ -229,7 +275,7 @@ process CUTADAPT_TRIM {
     """
     reformat.sh \
     in=${reads} out=${sample_id}_filtered.fastq.gz \
-    minlength=461 \
+    minl  ength=461 \
     bhist=${sample_id}_bhist.txt qhist=${sample_id}_qhist.txt qchist=${sample_id}_qchist.txt aqhist=${sample_id}_aqhist.txt bqhist=${sample_id}_bqhist.txt lhist=${sample_id}_lhist.txt \
     &> ${sample_id}_reformat.log
     """
@@ -388,7 +434,11 @@ backup umi-tools extract with full lenght reads
 
 //  }
 
-// need to pick up barcode names from the output above 
+/*
+ * Create barcode sequence clusters
+ * Default algorithm with Levenshtein distance=2
+ * Use seq-id in output to demultiplex input files based on barcode
+ */
 
 process STARCODE_CLUSTERING { 
     tag "Creating global clusters from UMI barcodes"
@@ -407,7 +457,6 @@ process STARCODE_CLUSTERING {
     starcode \
     -i <(cat ${reads} | gzip -cd) \
     --output ${sample_id}_starcode_umi_clusters.txt \
-    --sphere \
     --seq-id \
     --dist ${l_distance} \
     2> ${sample_id}_starcode_umi_clusters.log
@@ -417,13 +466,12 @@ process STARCODE_CLUSTERING {
  }
 
 /*
- * take fastq files and demultiplex based on identified clusters in all samples
- * output 1 file per sample per cluster in format: ${sample}_${cluster}.fastq
- * input need to be decompressed; gzip after
+ * Demultiplex samples fastq and assign reads to barcode groups generated using starcode clustering
+ * output should be 1 file per sample per cluster: ${sample}_${cluster}.fastq
  */
 
 process DEMULTIPLEX_BARCODES {
-    tag "Demultiplex reads into files based on in sequence UMI barcodes"
+    tag "Demultiplex $sample_id fastq files"
     publishDir "${params.outdir}/clustering/reads/$sample_id", mode:'symlink'
 
     input:
@@ -431,8 +479,7 @@ process DEMULTIPLEX_BARCODES {
     path scripts
 
     output:
-    //tuple val(sample_id), path("*.demux.fastq.gz"), emit: demux_reads //need to 'split' out umi fq to different channels
-    path("*.demux.fastq.gz"), emit: demux_reads
+    tuple val(sample_id), path("*.demux.fastq.gz"), emit: demux_reads
     path("*demux.log")
 
     script:
@@ -452,54 +499,143 @@ process DEMULTIPLEX_BARCODES {
 //     --sample_name 'combined' \
 //     --output_dir './'
 
-//#ay be easier to just add $umi_id as SM and $sample_id as ID
+/*
+ * Align each sequence to its reference using sensitive and rapid BWA-MEM aligner
+ * Assigning read groups with -R indicating $sample_id-$barcode origin.
+ * Can use this info to manipulate sequences downstream
+ */
 
 process BWA_MEM_ALIGN {
-    tag "Aligning $umi_id fastq against $reference reference"
-    publishDir "${params.outdir}/clustering/starcode", mode:'symlink'
+    tag"Aligning $sample_id fastqs against $index"
+    publishDir "${params.outdir}/alignment/bwa-mem/$sample_id", mode:'symlink'
 
 
     input:
     path index
-    tuple val(sample_id), val(umi_id), path(reads)
+    tuple val(sample_id), val(barcode), path(reads)
     path scripts 
 
 
     output:
-    tuple val(sample_id), val(umi_id), path("*.sorted.bam"), emit: sorted_bam
-    path("*_bwa.err")
+    tuple val(sample_id), val(barcode), path("*.sorted.bam"), emit: sorted_bam
+    path("*.bwa.err")
 
     script:
-    """
-    #modified script from https://www.biostars.org/p/280837/#310132
-    bash $scripts/get_read_id.sh $reads
-    
-    bwa mem -R "@RG\tID:\$id\tSM:\$id'_'\$sm\tPL:ILLUMINA" $index $reads 2> ${umi_id}_bwa.err | \
-         samtools sort -O bam -o ${umi_id}.sorted.bam
+    """  
+    INDEX=`find -L ./ -name "*.amb" | sed 's/\\.amb\$//'` #find indexed ref files and strip suffix
+
+    bwa mem -R '@RG\\tID:"${sample_id}_${barcode}"\\tSM:${sample_id}\\tPL:Illumina' \$INDEX $reads 2> ${sample_id}_${barcode}.bwa.err \
+        | samtools sort -O bam -o ${sample_id}_${barcode}.sorted.bam
     """
 
 }
 
-// The sequence reads are demultiplexed into subsets of read sequences for each cell clone based on UMI-barcode groups
-// so output {cell_clone}_{barcode}_fastq.gz
-
 /*
- * Starcode read clustering
-    script:
-    """
-    python $scripts/demux_optim.py \
-    --fastq_path $reads \
-    #--fastq_path <(cat $reads |gzip -dc) \
-    --barcode_path ${clusters_file} \
-    --sample_name ${sample_id} \
-    --output_dir './'
-    > ${sample_id}_demux.log
-
-    #compress files
-    #gzip *demux.fastq 
-
+ * Build BAM index for alignment visualisation & collect mapping statistics
  */
 
+process SAMTOOLS_INDEX_FLAGSTAT {
+    tag "Indexing $sample_id bam files & collecting alignment statistics"
+    publishDir "${params.outdir}/alignment/samtools/$sample_id", mode:'symlink'
+
+
+    input:
+    tuple val(sample_id), val(barcode), path(bam) 
+
+    output:
+    tuple val(sample_id), val(barcode), path("index/*.bam.bai"), emit:bam_indx
+    tuple val(sample_id), val(barcode), path("flagstat/*flagstat.out") 
+
+
+    script:
+    """
+    mkdir -p ./index
+    samtools index $bam > ./index/${sample_id}_${barcode}.sorted.bam.bai
+
+    mkdir -p ./flagstat
+    samtools flagstat $bam > ./flagstat/${sample_id}_${barcode}.flagstat.out
+    """
+
+}
+
+/*
+ * Variant Calling
+ * Using  a combination of freebayes & bcftools
+ * trade-off between sensitivity (bcftools) and specificity (freebayes)
+ */
+
+//freebayes variant calling
+
+// process FREEBAYES {
+//   tag "Calling variants on  $sample_id $barcode file"
+//   publishDir "${params.outdir}/calling/freebayes/$sample_id", mode:'symlink'
+
+//   input:
+//   path index
+//   tuple val(sample_id), val(barcode), path(bam)   
+
+//   output:
+//   tuple val(sample_id), val(barcode), path("*.freebayes.vcf"), emit: vcf
+
+
+//   script:
+//   """
+//   freebayes -p 2 --min-alternate-fraction 0.2 -f $index $bam > ${sample_id}_${barcode}.freebayes.vcf
+//   """
+// }
+
+//bcftools variant calling
+
+process BCFTOOLS_MPILEUP_CALL {
+  tag "Calling variants on  $sample_id $barcode file"
+  publishDir "${params.outdir}/calling/bcftools/$sample_id", mode:'symlink'
+
+  input:
+  path index
+  tuple val(sample_id), val(barcode), path(bam)   
+
+  output:
+  tuple val(sample_id), val(barcode), path("mpileup/*.bcftools.raw.bcf")
+  tuple val(sample_id), val(barcode), path("call/*.bcftools.vcf"), emit: vcf
+  
+
+  script:
+  """
+  mkdir -p mpileup
+  bcftools mpileup -O b -o ./mpileup/${sample_id}_${barcode}.bcftools.raw.bcf -f $index $bam
+
+  mkdir -p call
+  bcftools call --ploidy 2 -m -v -o call/${sample_id}_${barcode}.bcftools.vcf ./mpileup/${sample_id}_${barcode}.bcftools.raw.bcf
+  """
+}
+
+
+/*
+ * To verify variant calls for a specific codon, we compared each barcode group among all sample VCFs. 
+ * The minor fraction of variant calls in a particular barcode group that did not agree with a designed codon substitution was filtered and discarded.
+ *
+ */
+
+/*
+ * Annotate variants in VCF using VEP
+ * HGVS.c and HGVS.p annotation for codon and aa substitutions
+ */
+
+process SNPEFF_BUILD {
+    tag "Building SNPeff Annotation DB for $reference"
+    publishDir "${params.outdir}/annotation/snpeff", mode:'copy'
+
+   input:
+   path index
+   tuple val(sample_id), val(barcode), path(bam)   
+
+   output:
+   tuple val(sample_id), val(barcode), path("mpileup/*.bcftools.raw.bcf")
+   tuple val(sample_id), val(barcode), path("call/*.bcftools.vcf"), emit: vcf
+  
+
+
+}
 
 /*
  * raw file multiqc report
@@ -563,10 +699,17 @@ workflow {
     Channel
         .value(params.scripts)
         .set { scripts_ch }
+    
+    
     //workflow
 
+    if (!params.skip_subsample) {
+        read_input_ch    = SEQTK_SAMPLE(read_pairs_ch, sample_size_ch)
+    } else {
+        read_input_ch    = read_pairs_ch
+    }
 
-    read_input_ch    = SEQTK_SAMPLE(read_pairs_ch, sample_size_ch)
+
     index_ch         = BWA_MEM_INDEX(reference_ch)
     multiqc_input_ch = FASTQC_RAW(read_input_ch)
     merge_reads_ch   = BBMERGE(read_input_ch)
@@ -581,14 +724,37 @@ workflow {
 
     //combine input channels by sample keys
     demulti_ch = DEMULTIPLEX_BARCODES(trimmed_reads_ch.trimmed_reads.combine(clustered_umi_ch.clusters_file, by:0), scripts_ch)
-    
-    demulti_ch.demux_reads.view()
 
-    // demulti_ch.demux_reads.map { file -> 
-    //     def sample_id = file.name.toString().tokenize('_').get(0) //use barcode as sample identifier will need to change when running on larger system
+    //demulti_ch.demux_reads.view()
+
+    // grouped_by_sample_barcode = demulti_ch.demux_reads.map { file_path ->
+    //     def matcher = (file_path =~ /.*\/(.*)_(.*)\.demux\.fastq\.gz/)
+    //     def (barcode, sample) = matcher ? [matcher[0][1], matcher[0][2]] : null
+    // return tuple("${sample}_${barcode}", file_path)
+    // }
+
+    // grouped_by_sample_barcode.view()
+
+
+    grouped_by_sample_barcode = demulti_ch.demux_reads.flatMap { sample, files -> files.collect { [sample, it] } } //flatMap transform ch into flattened [sample, file_path] tuples chs.
+        .map { sample, file_path -> //create new tuple using map
+        def matcher = (file_path =~ /.*\/(.*)_(.*)\.demux\.fastq\.gz/) //capture both barcode & sample groups
+        def (barcode, sample_id) = matcher ? [matcher[0][1], matcher[0][2]] : null
+    //return tuple("${sample_id}_${barcode}", file_path)
+    return tuple(sample_id, barcode, file_path)
+    }
+    
+    bam_ch = BWA_MEM_ALIGN(index_ch,grouped_by_sample_barcode, scripts_ch)
+    samtools_idx_ch = SAMTOOLS_INDEX_FLAGSTAT(bam_ch.sorted_bam)
+
+    vcf_ch = FREEBAYES(reference_ch, bam_ch.sorted_bam)
+
+    bcf_ch = BCFTOOLS_MPILEUP_CALL(reference_ch, bam_ch.sorted_bam)
+
+    // .map { sample, file_path ->
     //     def umi_id    = file.name.toString().tokenize('_').get(1).tokenize('.demux.fastq.gz').get(0)
-    //     def sample_umi_id = sample_id + '_' + umi_id
-    //     return tuple(sample_umi_id, file) }.view()
+    //     def sample_umi_id = sample + '_' + umi_id
+    // return tuple(sample_umi_id, file) }.view()
 
     //     read_pairs_ch.view()
 //     read_pairs_ch.collaps.map { sample_id,file -> 
