@@ -13,26 +13,29 @@
 */
 
 // notes: reason for such long barcode is to ensure different cells/tat constructs don't have the same barcode by chance; allows us to count
+
 // need to identify 'true' barcodes from sequencing artifacts
 // need to find how many things truly sequenced!
 // plot cumulative fraction of reads and find the knee
-// dont think indexing file is necessary
 
-//  write a python script to merge adjacent SNPs into a MNP or look at using
+//  python script to merge adjacent snps (maybe R better for tabular data)
 //Read the input VCF file using a VCF parsing library or custom VCF parsing code in Python.
 //Iterate over the variants in the VCF file.
 //Identify adjacent SNPs based on their positions and alleles. You may consider a specific distance threshold or genomic context for merging.
 //Merge the adjacent SNPs into MNPs by combining their alleles and adjusting the position information.
 //Update the INFO, FORMAT, and genotype fields as necessary to reflect the merged MNPs.
-//Write the merged MNPs into a new VCF file or overwrite the input file, depending on your requirements
+
 
 //# ######## TODO #############
-// merge vcfs using bcftools merge; sort first?
-// bcftools csq wont work as need an ensmbl specific gff file format; lok 
-// counting reads using RPM; how does this control for sequencing depth??
-// extract the aa substitution, the supporting read depth (number of counts in each barcode),
+// restructure code into modules
+// create conda and/or docker modules for this
+// add computational resoruces (need to run with 1/2 samples with logging/tracing enabled)
+// import into R to process concat output; group_by id, sample and then calculate sum of counts (prob want one uniqule line per barcode?) and use this to calculate scaling factor
+// bcftools csq wont work as need an ensmbl specific gff file format; maybe look at how to generate 
+// feature per million reads- (counts of gene X / total number of reads) * 1000000.
+// how to calculate - group_by barcode,sample, extract 1 row (max or median), sum these values - this is our per library scaling factor
+q
 // identify the barcode groups for common variants and multiplex this data 
-// look at freebayes for calling MNPs
 // use sabre https://github.com/najoshi/sabre https://astrobiomike.github.io/amplicon/demultiplexing for demultiplexing as likely a lot faster as written in C; adv is it also removes the barcode from the file; easier for mapping etc and i get output of n reads in each barcode
 // for starcode, i need to run cutadapt twice (one for umi, one for reads).. if I use  umi-tools whitelist, I can find the UMIs and error-matched UMI, & reformat the output for sabre input    
 // just need a tool to identify the barcodes; could use starcode or umi-tools whitelist; for whitelist, extract first col, 
@@ -40,7 +43,6 @@
 // use umi-tools white-list to extract the likely cell barcodes & write to file; just take first col
 // cutadapt alt: extract barcode and write to file (maybe umi-tools)
 // take starcode clustering output with sequence & sorted cluster, split into fasta format each fasta record has multiple rows) and then
-// add snpcconfig to bin (maybe add both to see what works) and specify with -c on the command line
 // big q: do we perform clustering after merging or not? Clustering with plasmid file
 // Filter the variants by the intersection between plasmid and other file; use bcftools for this
 // this is the 'final' output; all barcodes should be present in both groups, so any that are not can be dropped from further analysis
@@ -75,7 +77,7 @@ params.l_distance = 2 // max Levenshtein distance for clustering
 params.scripts = "$projectDir/bin" // scripts for pipeline here
 params.reference = "$projectDir/docs/AF324493.2.fa" // maybe look at building the reference 
 params.reference_gbk = "AF324493.2" //reference genbank accession no
-params.bed ="$projectDir/bin/intervals.bed" // genomic interval (0-based) for tat 
+params.bed ="$projectDir/docs/intervals.bed" // genomic interval (0-based) for tat 
 
 // params.multiqc = 
 // params.outdir = 
