@@ -1,7 +1,8 @@
-Try umitools whitelist for barcode extraction rather than cutadapt as will record a csv with the barcode, associated reads and the number of times the barcode was detected (think it was 4 levinstein distance for ) 
+Try umitools whitelist for barcode extraction rather than cutadapt as will record a csv with the barcode, associated reads 
 Maybe first use cutadapt as easier 
 
 Questions:
+-  bed file is 0 based, half =-pne and genbank is 1-based, so have converted bed file
 - do you guys trim reads of final 32bp after barcode matching
 - Really in-depth sequencing.. Why not remove duplicates or maybe subsample to reduce runtime?
 - Why merge reads prior to trimming adapters?
@@ -10,12 +11,13 @@ Questions:
 - demultiplex script & how to handle I/O bottleneck from number of reads... could we just discard reads that don't match barcode? So much data as is..
 - Portion of read to use as reference (green only?) - shorter more efficient computationally
 - Need to find way to filter reads if the barcodes are shorter than 32bp before processing to speed up
+- OUtput that we need
+- Could maybe create a barcode file from clustering results?
 
 Outputs:
 - BBmerge merging ~80% of reads, 92% with flask, but maybe higher quality results?
 - less reads recovered in the umi-tools extract function (~10%)
 - Changes Levinstein distance to 4 so less clusters to cycle through
-
 
 Notes:
 - The Tat reference sequence includes the 32bp N for barcode matching
@@ -26,3 +28,22 @@ Notes:
 
 Demultiplexing step complete, but need to either i) cluster barcodes seperately or ii) combine the clustering & demultiplexing in one step
 For now cluster & demultiplex seperately. Can combine if required 
+
+Used info here to create my own custom db
+https://www.biostars.org/p/432180/
+
+#custom scripts
+#identify aa substitution - supply the aa sequence of ref tat
+#supply dict for nucleic acid to aa conversion
+#given posittion of variant, reading frame, sub in the aa change (if any) and give position
+#for each variant file, sub in the aa substitution
+
+
+#SNPeff dependencies, configs is stored under /Users/martingordon/anaconda3/envs/gigaassay/share/snpeff-5.1-2
+# added HIV-1 to the config file
+
+
+#test data
+Run with 0.01 of the dataset workdir stored as work.bak
+1e72ac75-4472-470c-807e-dc515f7ee497 fabulous_waddington
+

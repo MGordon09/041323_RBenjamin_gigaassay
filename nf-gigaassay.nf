@@ -12,32 +12,71 @@
 ----------------------------------------------------------------------------------------
 */
 
+// notes: reason for such long barcode is to ensure different cells/tat constructs don't have the same barcode by chance; allows us to count
+// need to identify 'true' barcodes from sequencing artifacts
+// need to find how many things truly sequenced!
+// plot cumulative fraction of reads and find the knee
+// dont think indexing file is necessary
+
+//  write a python script to merge adjacent SNPs into a MNP or look at using
+//Read the input VCF file using a VCF parsing library or custom VCF parsing code in Python.
+//Iterate over the variants in the VCF file.
+//Identify adjacent SNPs based on their positions and alleles. You may consider a specific distance threshold or genomic context for merging.
+//Merge the adjacent SNPs into MNPs by combining their alleles and adjusting the position information.
+//Update the INFO, FORMAT, and genotype fields as necessary to reflect the merged MNPs.
+//Write the merged MNPs into a new VCF file or overwrite the input file, depending on your requirements
+
 //# ######## TODO #############
-// big q: do we perform clustering after merging or not?
-// add SNPEff to annotate variants; first build viral db with *.gbk file (..check if it makes sense to do so..) and then annotate vcf and convert to tabular format with counts 
+// merge vcfs using bcftools merge; sort first?
+// bcftools csq wont work as need an ensmbl specific gff file format; lok 
+// counting reads using RPM; how does this control for sequencing depth??
+// extract the aa substitution, the supporting read depth (number of counts in each barcode),
+// identify the barcode groups for common variants and multiplex this data 
+// look at freebayes for calling MNPs
+// use sabre https://github.com/najoshi/sabre https://astrobiomike.github.io/amplicon/demultiplexing for demultiplexing as likely a lot faster as written in C; adv is it also removes the barcode from the file; easier for mapping etc and i get output of n reads in each barcode
+// for starcode, i need to run cutadapt twice (one for umi, one for reads).. if I use  umi-tools whitelist, I can find the UMIs and error-matched UMI, & reformat the output for sabre input    
+// just need a tool to identify the barcodes; could use starcode or umi-tools whitelist; for whitelist, extract first col, 
+// maybe look at cutadapt for demultiplexing (maximum default error rate is 10%, so 2-3 bp error allowed) https://cutadapt.readthedocs.io/en/stable/guide.html#named-adapters
+// use umi-tools white-list to extract the likely cell barcodes & write to file; just take first col
+// cutadapt alt: extract barcode and write to file (maybe umi-tools)
+// take starcode clustering output with sequence & sorted cluster, split into fasta format each fasta record has multiple rows) and then
+// add snpcconfig to bin (maybe add both to see what works) and specify with -c on the command line
+// big q: do we perform clustering after merging or not? Clustering with plasmid file
+// Filter the variants by the intersection between plasmid and other file; use bcftools for this
+// this is the 'final' output; all barcodes should be present in both groups, so any that are not can be dropped from further analysis
+// Add resource requirements per process;
 // create singularity & conda env to run pipeline  on HPC
-// Add resource requirements per process
-//check which are symlinked and which are copied
-// after calling, need to merge variant calls
-// INspect length of umi fastq
-// Mark duplicates? Don't know if it will owrk on this data as standard w/o incorporating UMI information
+// Inspect length of umi fastq
 // output needs to be: sample cell-line gft-exp barcode variant call support(n reads Q. what does this mean when there are multiple? codon substitutions? are they all 100%?) codon_substitutions aa_substitutions n_codon substitions n_aa_substitutions
 //filtering: remove low-freq calls as should be present in all samples? either i) don't call below a certain fraction or ii) look at intersection of each barcode for all samples and only extract the correct one
 // To the vcf file, add HGVS.c and HGVS.p information
 
+
+/// Notes
+//names: 1_Tatlib_JLTRG_GFP_high 1_ replicate
+// Bloom lab and FOwler group: review 
+//  plasmid shoudl have all the barcodes; mother 
+
+//Custom Python scripts are used to identify the amino acid substitution for the VCFs, the number of reads for each UMI-barcode in each sample (this will just be read depth as a proportion of total fastq file depth), and the barcodes groups for cells with the same amino acid substitutions. The PyVCF library was used in scripts that gathered the information for each variant from the VCF files. å
+
 // ####################### Default Parameter Settings #######################
 
+params.help = false
 params.reads =  "$projectDir/data/fastq/SRR*_{1,2}.fastq.gz"
-params.skip_subsample = '' // use conditional in workflow execution
+params.skip_subsample = '' // option to skip
 params.samplesize = 0.1 // 0.1 random sample of raw file
+params.caller = 'freebayes' // use freebayes as default variant caller as better at handling MNPs
 params.adapters = "$projectDir/docs/flanks.fa" // file with sequences to trim surrounding Tat contig
 params.tat_flank_5prime = "GAATTC"
 params.tat_flank_3prime = "GCGATCGC"
 params.umi_5prime = 'TGGATCCGGTACCGAGGAGATCTG'
 params.umi_3prime = 'GCGATCGC'
-params.l_distance = 2 // max maximum Levenshtein distance for starcode clustering 
-params.scripts = "$projectDir/bin"
-params.reference = "$projectDir/docs/tat.fa"
+params.l_distance = 2 // max Levenshtein distance for clustering 
+params.scripts = "$projectDir/bin" // scripts for pipeline here
+params.reference = "$projectDir/docs/AF324493.2.fa" // maybe look at building the reference 
+params.reference_gbk = "AF324493.2" //reference genbank accession no
+params.bed ="$projectDir/bin/intervals.bed" // genomic interval (0-based) for tat 
+
 // params.multiqc = 
 // params.outdir = 
 
@@ -76,8 +115,10 @@ if (params.help) {
 log.info """\
     G I G A A S S A Y   P I P E L I N E
     ===================================
-    reference: ${params.reference}
+    reference    : ${params.reference}
+    reference_genbank_accession : ${params.reference_gbk}
     reads        : ${params.reads}
+    samplesize   : ${params.samplesize}
     outdir       : ${params.outdir}
     adapters     : ${params.adapters}
     umi_5'_flank : ${params.umi_5prime}
@@ -96,7 +137,7 @@ process BWA_MEM_INDEX {
     publishDir "${params.outdir}/reference", mode: 'copy'
 
     input:
-    path(fasta)
+    path fasta
 
     output:
     path("bwa"), emit: index 
@@ -107,6 +148,30 @@ process BWA_MEM_INDEX {
     bwa index -a is -p bwa/${fasta.baseName} $fasta
     """
 }
+
+
+/*
+ * Build SNPEff database using reference files
+ */
+
+process SNPEFF_BUILD {
+    tag "Building SNPeff Annotation Database for $reference_gbk"
+    publishDir "${params.outdir}/annotation/snpeff", mode:'copy'
+
+    input:
+    val reference_gbk
+    path scripts
+
+    output:
+    path("data/$reference_gbk"), emit: snpeff_db // dir containing output of SNPEff build process
+    path("snpEff.config"), emit: snpeff_config
+
+    script:
+    """
+    bash ${scripts}/buildDbNcbi.sh $reference_gbk
+    """
+}
+
 
 /*
  * subsample reads (for testing)
@@ -159,7 +224,6 @@ process FASTQC_RAW {
 }
 
 /*
- * merge reads - not impacted by artifical seqs as on 3' ends
  * Losing lots of reads, may need to loosen params; consult Ronald
  */
 
@@ -184,6 +248,7 @@ process BBMERGE { //optimise memory usage
    out=${sample_id}_merge.fastq.gz \
    outu1=${sample_id}_U1merge.fastq.gz outu2=${sample_id}_U2merge.fastq.gz \
    outinsert=${sample_id}_insertinfo.txt ihist=insert-histogram.txt \
+   minoverlap=20 maxratio=0.15 \
    &> ${sample_id}_bbbmerge.log    
    """
 }
@@ -250,6 +315,8 @@ process CUTADAPT_TRIM {
     cutadapt \
     -g ${tat_flank_5prime}...${tat_flank_3prime} \
     ${reads} -o ${sample_id}_trim.fastq.gz \
+    -q 10 \
+    --minimum-length 300 \
     --discard-untrimmed \
     --report minimal \
     > ${sample_id}_cutadapt.log
@@ -333,35 +400,33 @@ process CUTADAPT_UMI {
     """
 }
 
-
 /*
  * extract UMI using flanking sequence and incorporate into the read header
  * regex pattern for umi capture: match flanking regions (allow 2 mismatches ~0.1e) and extract 32bp UMI
  */
 
+// process UMITOOLS_EXTRACT {
+//     tag "Extracting UMIs from $sample_id"
+//     publishDir "${params.outdir}/umi/umi_reads", mode:'copy'
 
-process UMITOOLS_EXTRACT {
-    tag "Extracting UMIs from $sample_id"
-    publishDir "${params.outdir}/umi/umi_reads", mode:'copy'
+//     input: 
+//     tuple val(sample_id), path(reads)
+//     val umi_5prime
 
-    input: 
-    tuple val(sample_id), path(reads)
-    val umi_5prime
+//     output:
+//     tuple val(sample_id), path("*_umi.header.fastq.gz"), emit: umi_reads
+//     path("*.log")
 
-    output:
-    tuple val(sample_id), path("*_umi.header.fastq.gz"), emit: umi_reads
-    path("*.log")
-
-    script:
-    """
-    umi_tools extract \
-    --stdin=${reads} \
-    --stdout=${sample_id}_umi.header.fastq.gz \
-    --extract-method=regex \
-    --bc-pattern='.+(?P<discard_1>${umi_5prime}){s<=2}(?P<umi_1>.{32})' \
-    --log=${sample_id}_processed.log
-    """
-}
+//     script:
+//     """
+//     umi_tools extract \
+//     --stdin=${reads} \
+//     --stdout=${sample_id}_umi.header.fastq.gz \
+//     --extract-method=regex \
+//     --bc-pattern='.+(?P<discard_1>${umi_5prime}){s<=2}(?P<umi_1>.{32})' \
+//     --log=${sample_id}_processed.log
+//     """
+// }
 /*
 backup umi-tools extract with full lenght reads
     script:
@@ -440,6 +505,8 @@ backup umi-tools extract with full lenght reads
  * Use seq-id in output to demultiplex input files based on barcode
  */
 
+// cluster 
+
 process STARCODE_CLUSTERING { 
     tag "Creating global clusters from UMI barcodes"
     publishDir "${params.outdir}/clustering/starcode", mode:'copy'
@@ -484,7 +551,7 @@ process DEMULTIPLEX_BARCODES {
 
     script:
     """
-    python ${scripts}/demux_index_optim.py \
+    python ${scripts}/demux_index_optim_v2.py \
     --fastq_path ${reads} \
     --barcode_path ${clusters_file} \
     --sample_name ${sample_id} \
@@ -493,15 +560,9 @@ process DEMULTIPLEX_BARCODES {
     """
 }
 
-//    python $scripts/demux_index_optim.py \
-//     --fastq_path comb_reads \
-//     --barcode_path starcode_umi_clusters.txt.gz \
-//     --sample_name 'combined' \
-//     --output_dir './'
-
 /*
  * Align each sequence to its reference using sensitive and rapid BWA-MEM aligner
- * Assigning read groups with -R indicating $sample_id-$barcode origin.
+ * Assigning read groups with -R indicating $barcode & $sample origin origin.
  * Can use this info to manipulate sequences downstream
  */
 
@@ -509,12 +570,9 @@ process BWA_MEM_ALIGN {
     tag"Aligning $sample_id fastqs against $index"
     publishDir "${params.outdir}/alignment/bwa-mem/$sample_id", mode:'symlink'
 
-
     input:
     path index
     tuple val(sample_id), val(barcode), path(reads)
-    path scripts 
-
 
     output:
     tuple val(sample_id), val(barcode), path("*.sorted.bam"), emit: sorted_bam
@@ -524,7 +582,7 @@ process BWA_MEM_ALIGN {
     """  
     INDEX=`find -L ./ -name "*.amb" | sed 's/\\.amb\$//'` #find indexed ref files and strip suffix
 
-    bwa mem -R '@RG\\tID:"${sample_id}_${barcode}"\\tSM:${sample_id}\\tPL:Illumina' \$INDEX $reads 2> ${sample_id}_${barcode}.bwa.err \
+    bwa mem -R '@RG\\tID:"${barcode}"\\tSM:${sample_id}\\tPL:Illumina' \$INDEX $reads 2> ${sample_id}_${barcode}.bwa.err \
         | samtools sort -O bam -o ${sample_id}_${barcode}.sorted.bam
     """
 
@@ -534,108 +592,207 @@ process BWA_MEM_ALIGN {
  * Build BAM index for alignment visualisation & collect mapping statistics
  */
 
-process SAMTOOLS_INDEX_FLAGSTAT {
-    tag "Indexing $sample_id bam files & collecting alignment statistics"
-    publishDir "${params.outdir}/alignment/samtools/$sample_id", mode:'symlink'
+//process SAMTOOLS_INDEX_FLAGSTAT {
+    // tag "Indexing $sample_id bam files & collecting alignment statistics"
+    // publishDir "${params.outdir}/alignment/samtools/$sample_id", mode:'symlink'
 
 
-    input:
-    tuple val(sample_id), val(barcode), path(bam) 
+    // input:
+    // tuple val(sample_id), val(barcode), path(bam) 
 
-    output:
-    tuple val(sample_id), val(barcode), path("index/*.bam.bai"), emit:bam_indx
-    tuple val(sample_id), val(barcode), path("flagstat/*flagstat.out") 
+    // output:
+    // tuple val(sample_id), val(barcode), path("index/*.bam.bai"), emit:bam_indx
+    // tuple val(sample_id), val(barcode), path("flagstat/*flagstat.out") 
 
 
-    script:
-    """
-    mkdir -p ./index
-    samtools index $bam > ./index/${sample_id}_${barcode}.sorted.bam.bai
+    // script:
+    // """
+    // mkdir -p ./index
+    // samtools index $bam > ./index/${sample_id}_${barcode}.sorted.bam.bai
 
-    mkdir -p ./flagstat
-    samtools flagstat $bam > ./flagstat/${sample_id}_${barcode}.flagstat.out
-    """
+    // mkdir -p ./flagstat
+    // samtools flagstat $bam > ./flagstat/${sample_id}_${barcode}.flagstat.out
+    // """
 
-}
+//}
 
 /*
  * Variant Calling
  * Using  a combination of freebayes & bcftools
  * trade-off between sensitivity (bcftools) and specificity (freebayes)
+ * min-alt-count just for testing for now for testing; disable for final setup (also, targets does not seem to be working..)
+ *   freebayes --ploidy 2 --targets $bed --min-alternate-fraction 0.5 --min-alternate-count 1 --min-mapping-quality 1  --min-base-quality 3 --use-best-n-alleles=1 -f $index $bam > ${sample_id}_${barcode}.freebayes.vcf
+*       dont worry about filtering as performed downstream using bcftools
  */
 
-//freebayes variant calling
+process FREEBAYES {
+  tag "Calling variants on  $sample_id $barcode file"
+  publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'symlink'
 
-// process FREEBAYES {
-//   tag "Calling variants on  $sample_id $barcode file"
-//   publishDir "${params.outdir}/calling/freebayes/$sample_id", mode:'symlink'
+  input:
+  path index
+  path bed
+  tuple val(sample_id), val(barcode), path(bam)   
 
-//   input:
-//   path index
-//   tuple val(sample_id), val(barcode), path(bam)   
-
-//   output:
-//   tuple val(sample_id), val(barcode), path("*.freebayes.vcf"), emit: vcf
+  output:
+  tuple val(sample_id), val(barcode), path("*.vcf"), emit: vcf
 
 
-//   script:
-//   """
-//   freebayes -p 2 --min-alternate-fraction 0.2 -f $index $bam > ${sample_id}_${barcode}.freebayes.vcf
-//   """
-// }
+  script:
+  """
+  freebayes --min-alternate-count 1 --min-mapping-quality 1  --min-base-quality 3 --use-best-n-alleles 1 -f $index $bam > ${sample_id}_${barcode}.vcf
+  """
+}
 
-//bcftools variant calling
+//bcftools variant calling options
+// mpileup:
+//-I skip indelcalling, -Ou output uncompressed bcf
+// -R limit pileups to target region in bed file (genomic coordinates of tat)
+// -Ou stream output in uncompressed bcf format to speed up process (avoid conversion between steps)
+// call:
+// skip indels and output variants only
+// use old consensus caller algorithm as only expecting one allele per site in this experiment. -m handles multi-allelic sites better
+//
+
 
 process BCFTOOLS_MPILEUP_CALL {
-  tag "Calling variants on  $sample_id $barcode file"
-  publishDir "${params.outdir}/calling/bcftools/$sample_id", mode:'symlink'
+  tag "Calling variants on demultiplexed files"
+  publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'copy'
 
   input:
   path index
   tuple val(sample_id), val(barcode), path(bam)   
 
   output:
-  tuple val(sample_id), val(barcode), path("mpileup/*.bcftools.raw.bcf")
-  tuple val(sample_id), val(barcode), path("call/*.bcftools.vcf"), emit: vcf
+  tuple val(sample_id), val(barcode), path("*.bcf"), emit: vcf
   
 
   script:
   """
-  mkdir -p mpileup
-  bcftools mpileup -O b -o ./mpileup/${sample_id}_${barcode}.bcftools.raw.bcf -f $index $bam
-
-  mkdir -p call
-  bcftools call --ploidy 2 -m -v -o call/${sample_id}_${barcode}.bcftools.vcf ./mpileup/${sample_id}_${barcode}.bcftools.raw.bcf
+  bcftools mpileup -I -Ou -f $index $bam | bcftools call --ploidy 2 --skip-variants indels --consensus-caller --variants-only -Ou -o ${sample_id}_${barcode}.bcf
   """
+}
+
+//bcftools variant calling options
+// view:
+// filter variants outside the target sequence (tat) & those with low supporting information: require at least 60% of reads to support call
+// annotate vcf id column with sample_barcode info 
+// normalise the variant calls (lelft-align & max parisomony) 
+// output is compressed bcf for feeding into concat input
+
+process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
+  tag "Removing off-target & low-support variants. Normalizing variants in files"
+  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/$sample_id", mode:'copy'
+
+  input:
+  path fasta
+  path bed
+  tuple val(sample_id), val(barcode), path(vcf) 
+
+  output:
+  tuple val(sample_id), path("*.norm.bcf"), emit: vcf
+  tuple val(sample_id), path("*.csi"), emit: idx
+  
+
+  script:
+  """
+  bcftools view --targets "AF324493.2:5829-6044,AF324493.2:8368-8414" -q 0.6:nref $vcf -Ou | bcftools annotate --set-id "${sample_id}_${barcode}" |  bcftools norm --fasta-ref $fasta -Ob -o ${sample_id}_${barcode}.norm.bcf
+  #create tbi index of file
+  bcftools index ${sample_id}_${barcode}.norm.bcf
+  """
+}
+
+// bcftools concat to concatenate vcfs per sample
+// vcf files
+
+process BCFTOOLS_CONCAT {
+    tag " Concatenating sample $sample_id vcfs"
+    publishDir "${params.outdir}/annotation/bcftools/concat/${params.caller}/$sample_id", mode:'copy'
+
+    input:
+    tuple val(sample_id), path(vcfs), path(idxs)
+
+    output:
+    tuple val(sample_id), path("*.combined.vcf"), emit: vcf
+
+    script:
+    """
+    # create list of input files
+    find -L ./ -name "*.norm.bcf" > vcfs_list
+    bcftools concat --allow-overlaps --file-list ./vcfs_list --output ${sample_id}.norm.combined.vcf
+    """
 }
 
 
 /*
- * To verify variant calls for a specific codon, we compared each barcode group among all sample VCFs. 
+ * Annotate variants in VCF using SNPEffect 
+ * HGVS.c and HGVS.p annotation for codon and aa substitutions
+ */
+
+process SNPEFF_ANNO {
+    tag "Annotating variants in $sample_id $barcode"
+    publishDir "${params.outdir}/annotation/snpeff/${params.caller}/$sample_id", mode:'copy'
+
+    input:
+    path snpeff_db
+    path snpeff_config //path snpeff_config make optional as already available through db path
+    path intervals_bed
+    val reference_v
+    tuple val(sample_id), val(barcode), path(vcf)
+
+    output:
+    tuple val(sample_id), val(barcode), path("*.ann.vcf"), emit: ann_vcf
+
+    // using shell block; nf variables assigned !, bash variables $
+    //    # ggrep installed on mac to replicate linux versions
+    // slower anyway as would perform search for each process; just specify string at CL
+    //    #VERSION=`find -L ./data/ -type d | ggrep -E '.*/[A-Z]{1,2}[0-9]{5,6}[.][0-9]{1}?' | xargs -I {} basename {}`
+    //#echo $VERSION
+
+    //no_stats as want to prevent snpeff filtering my variants
+    // other option emit the data dir and config file as seperate channels and then can easily specify
+    """  
+    snpEff ann -nodownload -v ${reference_v} \\
+     -c ${snpeff_config} \\
+     -csvStats -hgvs \\
+     -noStats \\
+     ${vcf} > ${sample_id}_${barcode}.ann.vcf
+    """
+}
+
+///*    // #GENOME_V=`find . -type d | grep -E '.*/[A-Z]{1,2}[0-9]{5,6}\.[0-9]?' | xargs -I {} basename {}`
+
+ /* To verify variant calls for a specific codon, we compared each barcode group among all sample VCFs. (Create channels of overlapping barcodes)
  * The minor fraction of variant calls in a particular barcode group that did not agree with a designed codon substitution was filtered and discarded.
  *
  */
+
+//process BCFTOOLS_
+//     -dataDir $snpeff_db \
+//      -filterInterval ${intervals_bed}/intervals.bed \
 
 /*
  * Annotate variants in VCF using VEP
  * HGVS.c and HGVS.p annotation for codon and aa substitutions
  */
 
-process SNPEFF_BUILD {
-    tag "Building SNPeff Annotation DB for $reference"
-    publishDir "${params.outdir}/annotation/snpeff", mode:'copy'
+// build SNPEff anotation dataabse given reference in genbank format
 
-   input:
-   path index
-   tuple val(sample_id), val(barcode), path(bam)   
+// process SNPEFF_ANN {
+//     tag "Building SNPeff Annotation DB for $reference gbk file"
+//     publishDir "${params.outdir}/annotation/snpeff/db", mode:'copy'
 
-   output:
-   tuple val(sample_id), val(barcode), path("mpileup/*.bcftools.raw.bcf")
-   tuple val(sample_id), val(barcode), path("call/*.bcftools.vcf"), emit: vcf
+//    input:
+//    path reference
+//    tuple val(sample_id), val(barcode), path(bam)   
+
+//    output:
+//    tuple val(sample_id), val(barcode), path("mpileup/*.bcftools.raw.bcf")
+//    tuple val(sample_id), val(barcode), path("call/*.bcftools.vcf"), emit: vcf
   
 
 
-}
+// }
 
 /*
  * raw file multiqc report
@@ -668,9 +825,17 @@ workflow {
         .value(params.samplesize)
         .set { sample_size_ch }
 
-    Channel //subsample val input channel
+    Channel //reference fasta
         .value(params.reference)
         .set { reference_ch }      
+
+    Channel
+        .value(params.reference_gbk)
+        .set { reference_gbk_ch }
+
+    Channel
+        .value(params.bed)
+        .set { bed_ch }
 
     Channel 
         .value(params.adapters)
@@ -709,8 +874,10 @@ workflow {
         read_input_ch    = read_pairs_ch
     }
 
-
+    // Build reference index & snpeff db
     index_ch         = BWA_MEM_INDEX(reference_ch)
+    snpeffdb_ch      = SNPEFF_BUILD(reference_gbk_ch, scripts_ch)
+
     multiqc_input_ch = FASTQC_RAW(read_input_ch)
     merge_reads_ch   = BBMERGE(read_input_ch)
     trimmed_reads_ch = CUTADAPT_TRIM(merge_reads_ch.merged_reads, flank_5_ch, flank_3_ch)
@@ -744,12 +911,31 @@ workflow {
     return tuple(sample_id, barcode, file_path)
     }
     
-    bam_ch = BWA_MEM_ALIGN(index_ch,grouped_by_sample_barcode, scripts_ch)
-    samtools_idx_ch = SAMTOOLS_INDEX_FLAGSTAT(bam_ch.sorted_bam)
+    bam_ch = BWA_MEM_ALIGN(index_ch,grouped_by_sample_barcode)
+    //samtools_idx_ch = SAMTOOLS_INDEX_FLAGSTAT(bam_ch.sorted_bam)
 
-    vcf_ch = FREEBAYES(reference_ch, bam_ch.sorted_bam)
+    // calling; depends on the caller specified
 
-    bcf_ch = BCFTOOLS_MPILEUP_CALL(reference_ch, bam_ch.sorted_bam)
+    if (params.caller == 'freebayes') {
+        vcf_ch = FREEBAYES(reference_ch, bed_ch, bam_ch.sorted_bam)
+    } else if (params.caller == 'bcftools') {
+        vcf_ch = BCFTOOLS_MPILEUP_CALL(reference_ch, bam_ch.sorted_bam)
+    }
+
+    // filter off-target variants those with lower read support. annotate ID col with sample_barcode and normalise variants (left align, max parisomony representation) 
+    norm_vcf_ch = BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX(reference_ch, bed_ch, vcf_ch.vcf)
+
+    
+    // collapse vcf & indx files into a single channel per sample
+    // tuple w 3 values: samplename, vcf, idx
+    comb_ch = norm_vcf_ch.vcf.groupTuple()
+    .combine(norm_vcf_ch.idx.groupTuple(), by:0).view()
+
+    // concatenate variants in vcf files
+    vcf_concat_ch = BCFTOOLS_CONCAT(comb_ch)
+
+    // annotate variants w snpEff
+    //ann_ch = SNPEFF_ANNO(snpeffdb_ch.snpeff_db, snpeffdb_ch.snpeff_config, scripts_ch, reference_gbk_ch, norm_vcf_ch.vcf)
 
     // .map { sample, file_path ->
     //     def umi_id    = file.name.toString().tokenize('_').get(1).tokenize('.demux.fastq.gz').get(0)

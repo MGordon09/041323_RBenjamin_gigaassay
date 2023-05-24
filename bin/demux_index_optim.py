@@ -3,7 +3,6 @@
 import sys
 import os
 import argparse
-import re
 import gzip
 
 #barcode_path='/Users/martingordon/Documents/projects/041223_Ronald_B_Babu/041323_RBenjamin_gigaassay/clustering_test/starcode_umi_clusters_index_10k.txt'
@@ -50,7 +49,7 @@ def match_index(fq_record, barcodes):
         barcode_group = barcodes[fq_record]
         del barcodes[fq_record]  # discard index to decrease future search space
     return str(barcode_group).split("'")[1]
-    #return str(barcode_group)    
+    #return barcode_group
 
 
 def process_fastq(fastq_path, barcode_path, output_dir, sample_name):
@@ -59,7 +58,7 @@ def process_fastq(fastq_path, barcode_path, output_dir, sample_name):
     with gzip.open(fastq_path,'rt',encoding='utf-8') as fastq_file:
         for count, (read_id, seq, plus, qual) in enumerate(zip(*[fastq_file]*4), 1): # zip to group the four lines of record, 1 indexing to match starcode
                 barcode_group = match_index(count, barcodes)
-                if barcode_group is not None and len(barcode_group) == 32: #only want reads with 32bp barcodes
+                if barcode_group is not None and len(barcode_group) <= 32: #only want reads with 32bp barcodes
                     output_file_name = os.path.join(output_dir, '%s_%s.demux.fastq.gz' % (barcode_group, sample_name))
                     with gzip.open(output_file_name, 'at', encoding='utf-8', compresslevel=6) as output_file:
                         output_file.write('%s\n%s\n%s\n%s\n' % (read_id.strip(), seq.strip(), plus.strip(), qual.strip()))

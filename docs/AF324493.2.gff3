@@ -1,0 +1,28 @@
+##gff-version 3
+#!gff-spec-version 1.21
+#!processor NCBI annotwriter
+##sequence-region AF324493.2 1 14825
+##species https://www.ncbi.nlm.nih.gov/Taxonomy/Browser/wwwtax.cgi?id=151458
+AF324493.2	Genbank	region	1	14825	.	+	.	ID=AF324493.2:1..14825;Dbxref=taxon:151458;Is_circular=true;Name=pNL4-3;gbkey=Src;genome=plasmid;mol_type=other DNA;plasmid-name=pNL4-3
+AF324493.2	Genbank	long_terminal_repeat	1	634	.	+	.	ID=id-AF324493.2:1..634;Note=5' long terminal repeat;gbkey=repeat_region;rpt_type=long_terminal_repeat
+AF324493.2	Genbank	repeat_region	454	550	.	+	.	ID=id-AF324493.2:454..550;Note=R%3B 5' copy;gbkey=repeat_region
+AF324493.2	Genbank	CDS	790	2292	.	+	0	ID=cds-AAK08483.1;Dbxref=NCBI_GP:AAK08483.1;Name=AAK08483.1;Note=gag polyprotein;gbkey=CDS;product=gag polyprotein;protein_id=AAK08483.1;transl_table=11
+AF324493.2	Genbank	CDS	2085	5096	.	+	0	ID=cds-AAK08484.2;Dbxref=NCBI_GP:AAK08484.2;Name=AAK08484.2;gbkey=CDS;partial=true;product=pol polyprotein;protein_id=AAK08484.2;start_range=.,2085;transl_table=11
+AF324493.2	Genbank	sequence_difference	2421	2421	.	+	.	ID=id-AF324493.2:2421..2421;Note=compared to sequence deposited in GenBank Accession Number M19921%3B results in arginine to glycine substitution;gbkey=misc_difference;replace=g
+AF324493.2	Genbank	CDS	5041	5619	.	+	0	ID=cds-AAK08482.1;Dbxref=NCBI_GP:AAK08482.1;Name=AAK08482.1;gbkey=CDS;product=vif protein;protein_id=AAK08482.1;transl_table=11
+AF324493.2	Genbank	CDS	5559	5849	.	+	0	ID=cds-AAK08485.1;Dbxref=NCBI_GP:AAK08485.1;Name=AAK08485.1;gbkey=CDS;product=vpr protein;protein_id=AAK08485.1;transl_table=11
+AF324493.2	Genbank	sequence_feature	5743	5748	.	+	.	ID=id-AF324493.2:5743..5748;Note=EcoRI site of recombination;gbkey=misc_feature
+AF324493.2	Genbank	CDS	5830	6044	.	+	0	ID=cds-AAK08486.1;Dbxref=NCBI_GP:AAK08486.1;Name=AAK08486.1;Note=tat protein;gbkey=CDS;product=tat protein;protein_id=AAK08486.1;transl_table=11
+AF324493.2	Genbank	CDS	8369	8414	.	+	1	ID=cds-AAK08486.1;Dbxref=NCBI_GP:AAK08486.1;Name=AAK08486.1;Note=tat protein;gbkey=CDS;product=tat protein;protein_id=AAK08486.1;transl_table=11
+AF324493.2	Genbank	CDS	5969	6044	.	+	0	ID=cds-AAK08487.1;Dbxref=NCBI_GP:AAK08487.1;Name=AAK08487.1;gbkey=CDS;product=rev protein;protein_id=AAK08487.1;transl_table=11
+AF324493.2	Genbank	CDS	8369	8643	.	+	2	ID=cds-AAK08487.1;Dbxref=NCBI_GP:AAK08487.1;Name=AAK08487.1;gbkey=CDS;product=rev protein;protein_id=AAK08487.1;transl_table=11
+AF324493.2	Genbank	CDS	6061	6306	.	+	0	ID=cds-AAK08488.1;Dbxref=NCBI_GP:AAK08488.1;Name=AAK08488.1;gbkey=CDS;product=vpu protein;protein_id=AAK08488.1;transl_table=11
+AF324493.2	Genbank	CDS	6221	8785	.	+	0	ID=cds-AAK08489.2;Dbxref=NCBI_GP:AAK08489.2;Name=AAK08489.2;gbkey=CDS;product=envelope polyprotein;protein_id=AAK08489.2;transl_table=11
+AF324493.2	Genbank	CDS	8787	9407	.	+	0	ID=cds-AAK08490.1;Dbxref=NCBI_GP:AAK08490.1;Name=AAK08490.1;gbkey=CDS;product=nef protein;protein_id=AAK08490.1;transl_table=11
+AF324493.2	Genbank	long_terminal_repeat	9076	9709	.	+	.	ID=id-AF324493.2:9076..9709;Note=3' long terminal repeat;gbkey=repeat_region;rpt_type=long_terminal_repeat
+AF324493.2	Genbank	repeat_region	9529	9626	.	+	.	ID=id-AF324493.2:9529..9626;Note=R%3B 3' copy;gbkey=repeat_region
+AF324493.2	Genbank	polyA_signal_sequence	9602	9607	.	+	.	ID=id-AF324493.2:9602..9607;gbkey=regulatory;regulatory_class=polyA_signal_sequence
+AF324493.2	Genbank	sequence_feature	9710	11283	.	+	.	ID=id-AF324493.2:9710..11283;Note=3' cellular genomic sequence;gbkey=misc_feature
+AF324493.2	Genbank	CDS	12279	13139	.	-	0	ID=cds-AAK08491.1;Dbxref=NCBI_GP:AAK08491.1;Name=AAK08491.1;Note=from pUC vector;gbkey=CDS;product=beta-lactamase;protein_id=AAK08491.1;transl_table=11
+AF324493.2	Genbank	sequence_feature	13648	14825	.	+	.	ID=id-AF324493.2:13648..14825;Note=5' cellular genomic sequence;gbkey=misc_feature
+
