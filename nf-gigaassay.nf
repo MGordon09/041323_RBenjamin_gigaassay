@@ -12,9 +12,27 @@
 ----------------------------------------------------------------------------------------
 */
 
+//18-08-23
+// for the sanity check, merge all output vcf concat files and for each barcode, verify the sites mutated are the same
+// write custom scripts  to identify the amino acid substitution for the VCFs( have used SNPeff, but maybe also do your own translation), the number of reads for each UMI-barcode in each sample (split barcode name, grp by barcode and count N records), and the barcodes groups for cells with the same amino acid substitutions (group by AA sub and find find barcodes).
+// To verify variant calls for a specific codon, compare each barcode group among all sample VCFs. The minor fraction of variant calls in a particular barcode group that did not agree with a designed codon substitution was filtered and discarded.
+// multiplex according to AA variant
+// test buffer if issue with large f size persist
+// write script to process the output of the merged file
+// add conda/docker/singularity functionality for wynton run
+
+//16-08-23
+// define suitable number of reads in cluster to filter to.. use n=2 for now
+// seperated vcfs w and w/o variants; & filter the channel to concat channel to only accept valid calls
+// if still issue with processing many files at once to merge, submit by batch: use buffer operator
+// what about w docker containers using the mac1 architecture? Neded to update/modularise pipeline code anyway, so perhaps makes sense to include docker container options for each process
+// hopefully this might sidestep issue\
+
 // notes: reason for such long barcode is to ensure different cells/tat constructs don't have the same barcode by chance; allows us to count
 
-// need to identify 'true' barcodes from sequencing artifacts
+
+// how to multiplex? group table by site & mutant, extract common barcodes and use this to combine?
+// need to identify 'true' barcodes from sequencing artifacts;
 // need to find how many things truly sequenced!
 // plot cumulative fraction of reads and find the knee
 
@@ -27,6 +45,10 @@
 
 
 //# ######## TODO #############
+// look at another clusering algorithm # think this is fine now; spheres algorithm so all members have max levinstein dist 2
+// add bbduk
+// create conda environemnt and add to doc
+// add executors
 // restructure code into modules
 // create conda and/or docker modules for this
 // add computational resoruces (need to run with 1/2 samples with logging/tracing enabled)
@@ -34,7 +56,6 @@
 // bcftools csq wont work as need an ensmbl specific gff file format; maybe look at how to generate 
 // feature per million reads- (counts of gene X / total number of reads) * 1000000.
 // how to calculate - group_by barcode,sample, extract 1 row (max or median), sum these values - this is our per library scaling factor
-q
 // identify the barcode groups for common variants and multiplex this data 
 // use sabre https://github.com/najoshi/sabre https://astrobiomike.github.io/amplicon/demultiplexing for demultiplexing as likely a lot faster as written in C; adv is it also removes the barcode from the file; easier for mapping etc and i get output of n reads in each barcode
 // for starcode, i need to run cutadapt twice (one for umi, one for reads).. if I use  umi-tools whitelist, I can find the UMIs and error-matched UMI, & reformat the output for sabre input    
@@ -61,12 +82,6 @@ q
 
 //Custom Python scripts are used to identify the amino acid substitution for the VCFs, the number of reads for each UMI-barcode in each sample (this will just be read depth as a proportion of total fastq file depth), and the barcodes groups for cells with the same amino acid substitutions. The PyVCF library was used in scripts that gathered the information for each variant from the VCF files. å
 
-// ####################### Default Parameter Settings #######################
-
-params.help = false
-params.reads =  "$projectDir/data/fastq/SRR*_{1,2}.fastq.gz"
-params.skip_subsample = '' // option to skip
-params.samplesize = 0.1 // 0.1 random sample of raw file
 params.caller = 'freebayes' // use freebayes as default variant caller as better at handling MNPs
 params.adapters = "$projectDir/docs/flanks.fa" // file with sequences to trim surrounding Tat contig
 params.tat_flank_5prime = "GAATTC"
@@ -78,9 +93,9 @@ params.scripts = "$projectDir/bin" // scripts for pipeline here
 params.reference = "$projectDir/docs/AF324493.2.fa" // maybe look at building the reference 
 params.reference_gbk = "AF324493.2" //reference genbank accession no
 params.bed ="$projectDir/docs/intervals.bed" // genomic interval (0-based) for tat 
-
+params.min_cluster_size = 5 // minimum number of reads per cluster.. need to find sensible number. For this amount of data is 5 good? To use all just input 1 here
 // params.multiqc = 
-// params.outdir = 
+//params.outdir = "$projectDir/test-run'
 
 
 
@@ -318,7 +333,7 @@ process CUTADAPT_TRIM {
     -g ${tat_flank_5prime}...${tat_flank_3prime} \
     ${reads} -o ${sample_id}_trim.fastq.gz \
     -q 10 \
-    --minimum-length 300 \
+    --minimum-length 320 \
     --discard-untrimmed \
     --report minimal \
     > ${sample_id}_cutadapt.log
@@ -526,6 +541,7 @@ process STARCODE_CLUSTERING {
     starcode \
     -i <(cat ${reads} | gzip -cd) \
     --output ${sample_id}_starcode_umi_clusters.txt \
+    -s \
     --seq-id \
     --dist ${l_distance} \
     2> ${sample_id}_starcode_umi_clusters.log
@@ -533,6 +549,37 @@ process STARCODE_CLUSTERING {
     gzip ${sample_id}_starcode_umi_clusters.txt
     """
  }
+
+/*
+ * Filter out noisy clusters with less than N reads (less than 2 reads for now)
+ * remember this is dependent on the order of the input file
+ * Need to determine what we consider 'noisy'
+ */
+
+process FILTER_CLUSTERS { 
+    tag "Removing clusters with less than $min_cluster_size sequences"
+    publishDir "${params.outdir}/clustering/starcode", mode:'copy'
+
+    input: 
+    tuple val(sample_id), path(clusters_file)
+    val cluster_size
+
+    output:
+    tuple val(sample_id), path("*clusters.clean.txt.gz"), emit: clusters_file
+    path("*clusters.clean.log")
+
+
+    script:
+    """
+    zless ${clusters_file} | awk 'NR==1 { print } NR != 1 && \$2 >= ${cluster_size} { print }' | gzip > ${sample_id}_starcode_umi_clusters.clean.txt.gz
+
+    start_seq=`wc -l  ${clusters_file} | awk '{print \$1}'`
+    end_seq=`wc -l  ${sample_id}_starcode_umi_clusters.clean.txt.gz | awk '{print \$1}'`
+
+    echo "Initial clusters: \$start_seq Remaining clusters: \$end_seq" >  ${sample_id}_starcode_umi_clusters.clean.log
+    """
+ }
+
 
 /*
  * Demultiplex samples fastq and assign reads to barcode groups generated using starcode clustering
@@ -621,10 +668,8 @@ process BWA_MEM_ALIGN {
 /*
  * Variant Calling
  * Using  a combination of freebayes & bcftools
- * trade-off between sensitivity (bcftools) and specificity (freebayes)
- * min-alt-count just for testing for now for testing; disable for final setup (also, targets does not seem to be working..)
  *   freebayes --ploidy 2 --targets $bed --min-alternate-fraction 0.5 --min-alternate-count 1 --min-mapping-quality 1  --min-base-quality 3 --use-best-n-alleles=1 -f $index $bam > ${sample_id}_${barcode}.freebayes.vcf
-*       dont worry about filtering as performed downstream using bcftools
+ * --use-best-n-alleles as only one site is mutated only take best site (SNPS vs MNPs? how does freebayes distinguish take 3 for now)
  */
 
 process FREEBAYES {
@@ -642,7 +687,7 @@ process FREEBAYES {
 
   script:
   """
-  freebayes --min-alternate-count 1 --min-mapping-quality 1  --min-base-quality 3 --use-best-n-alleles 1 -f $index $bam > ${sample_id}_${barcode}.vcf
+  freebayes --min-alternate-count 2 --min-mapping-quality 30  --min-base-quality 20 --use-best-n-alleles 3 -f $index $bam > ${sample_id}_${barcode}.vcf
   """
 }
 
@@ -658,6 +703,7 @@ process FREEBAYES {
 
 
 process BCFTOOLS_MPILEUP_CALL {
+
   tag "Calling variants on demultiplexed files"
   publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'copy'
 
@@ -681,10 +727,15 @@ process BCFTOOLS_MPILEUP_CALL {
 // annotate vcf id column with sample_barcode info 
 // normalise the variant calls (lelft-align & max parisomony) 
 // output is compressed bcf for feeding into concat input
+// improve target option here by modifying above
 
 process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
-  tag "Removing off-target & low-support variants. Normalizing variants in files"
-  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/$sample_id", mode:'copy'
+    tag "Removing off-target & low-support variants. Normalizing variants in files"
+    publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/$sample_id", mode:'copy'
+    // idea of writing output to seperate folders; but just rename when feeding into channel
+  //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/variants/$sample_id", pattern: "*.norm.bcf", mode:'copy'
+  //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/index/$sample_id", pattern: "*.norm.bcf.csi", mode:'copy'
+  //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/no_calls/$sample_id", pattern: "*.norm.null.bcf", mode:'copy'
 
   input:
   path fasta
@@ -692,16 +743,24 @@ process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
   tuple val(sample_id), val(barcode), path(vcf) 
 
   output:
-  tuple val(sample_id), path("*.norm.bcf"), emit: vcf
-  tuple val(sample_id), path("*.csi"), emit: idx
+  tuple val(sample_id), path("*.norm.bcf"), emit: vcf, optional: true
+  tuple val(sample_id), path("*.norm.bcf.csi"), emit: idx, optional: true
   
 
   script:
   """
-  bcftools view --targets "AF324493.2:5829-6044,AF324493.2:8368-8414" -q 0.6:nref $vcf -Ou | bcftools annotate --set-id "${sample_id}_${barcode}" |  bcftools norm --fasta-ref $fasta -Ob -o ${sample_id}_${barcode}.norm.bcf
-  #create tbi index of file
-  bcftools index ${sample_id}_${barcode}.norm.bcf
+  # exit status 0; if SNPs detected process VCF
+  if bcftools view  $vcf | grep -qv '^#'
+  then
+    bcftools view --targets "AF324493.2:5829-6044,AF324493.2:8368-8414" -q 0.6:nref $vcf -Ou | \\
+    bcftools annotate --set-id "${sample_id}_${barcode}" |  \\
+    bcftools norm --fasta-ref $fasta -Ob -o ${sample_id}_${barcode}.norm.bcf
+
+    #create tbi index of file
+    bcftools index ${sample_id}_${barcode}.norm.bcf
+  fi
   """
+
 }
 
 // bcftools concat to concatenate vcfs per sample
@@ -725,7 +784,6 @@ process BCFTOOLS_CONCAT {
     """
 }
 
-
 /*
  * Annotate variants in VCF using SNPEffect 
  * HGVS.c and HGVS.p annotation for codon and aa substitutions
@@ -740,10 +798,11 @@ process SNPEFF_ANNO {
     path snpeff_config //path snpeff_config make optional as already available through db path
     path intervals_bed
     val reference_v
-    tuple val(sample_id), val(barcode), path(vcf)
+    tuple val(sample_id), path(vcf)
+    //tuple val(sample_id), val(barcode), path(vcf)
 
     output:
-    tuple val(sample_id), val(barcode), path("*.ann.vcf"), emit: ann_vcf
+    tuple val(sample_id), path("*.ann.vcf"), emit: ann_vcf
 
     // using shell block; nf variables assigned !, bash variables $
     //    # ggrep installed on mac to replicate linux versions
@@ -758,7 +817,7 @@ process SNPEFF_ANNO {
      -c ${snpeff_config} \\
      -csvStats -hgvs \\
      -noStats \\
-     ${vcf} > ${sample_id}_${barcode}.ann.vcf
+     ${vcf} > ${sample_id}.ann.vcf
     """
 }
 
@@ -864,6 +923,10 @@ workflow {
         .set { lev_dist_ch }
 
     Channel
+        .value(params.min_cluster_size)
+        .set { min_cluster_size_ch }
+
+    Channel
         .value(params.scripts)
         .set { scripts_ch }
     
@@ -888,11 +951,16 @@ workflow {
     umi_reads_ch     = CUTADAPT_UMI(trimmed_reads_ch.trimmed_reads, umi_5_ch)
     //umi_h_reads_ch   = UMITOOLS_EXTRACT(trimmed_reads_ch.trimmed_reads, umi_5_ch)
     //umi_h_reads_ch   = UMITOOLS_EXTRACT(trimmed_reads_ch.trimmed_reads, umi_5_ch, umi_3_ch)
+    
     // cluster umi for each sample
     clustered_umi_ch = STARCODE_CLUSTERING(umi_reads_ch.umi_reads, lev_dist_ch)
 
+    // filter the clusters to only keep clusters with >= n
+    clean_clustered_umi_ch = FILTER_CLUSTERS(clustered_umi_ch.clusters_file, min_cluster_size_ch)
+
+
     //combine input channels by sample keys
-    demulti_ch = DEMULTIPLEX_BARCODES(trimmed_reads_ch.trimmed_reads.combine(clustered_umi_ch.clusters_file, by:0), scripts_ch)
+    demulti_ch = DEMULTIPLEX_BARCODES(trimmed_reads_ch.trimmed_reads.combine(clean_clustered_umi_ch.clusters_file, by:0), scripts_ch)
 
     //demulti_ch.demux_reads.view()
 
@@ -931,13 +999,17 @@ workflow {
     // collapse vcf & indx files into a single channel per sample
     // tuple w 3 values: samplename, vcf, idx
     comb_ch = norm_vcf_ch.vcf.groupTuple()
-    .combine(norm_vcf_ch.idx.groupTuple(), by:0).view()
+    .combine(norm_vcf_ch.idx.groupTuple(), by:0)
+  //.buffer(size: 100000, remainder: true) #if still issues, rbeak each channel into a subset to reduce
+
+
 
     // concatenate variants in vcf files
+    // buffer(size: 10, remainder: true)
     vcf_concat_ch = BCFTOOLS_CONCAT(comb_ch)
 
-    // annotate variants w snpEff
-    //ann_ch = SNPEFF_ANNO(snpeffdb_ch.snpeff_db, snpeffdb_ch.snpeff_config, scripts_ch, reference_gbk_ch, norm_vcf_ch.vcf)
+    // annotate comb variants file w snpEff
+    ann_ch = SNPEFF_ANNO(snpeffdb_ch.snpeff_db, snpeffdb_ch.snpeff_config, scripts_ch, reference_gbk_ch, vcf_concat_ch.vcf)
 
     // .map { sample, file_path ->
     //     def umi_id    = file.name.toString().tokenize('_').get(1).tokenize('.demux.fastq.gz').get(0)
