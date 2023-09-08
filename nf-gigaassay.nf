@@ -12,6 +12,10 @@
 ----------------------------------------------------------------------------------------
 */
 
+// 09-09-23
+// conda env works; need to get singularity/docker running
+// remove the variant filtering stepoutside the sites OI, can filter these sites after variant calling performed (too)
+
 //18-08-23
 // for the sanity check, merge all output vcf concat files and for each barcode, verify the sites mutated are the same
 // write custom scripts  to identify the amino acid substitution for the VCFs( have used SNPeff, but maybe also do your own translation), the number of reads for each UMI-barcode in each sample (split barcode name, grp by barcode and count N records), and the barcodes groups for cells with the same amino acid substitutions (group by AA sub and find find barcodes).
@@ -26,17 +30,15 @@
 // seperated vcfs w and w/o variants; & filter the channel to concat channel to only accept valid calls
 // if still issue with processing many files at once to merge, submit by batch: use buffer operator
 // what about w docker containers using the mac1 architecture? Neded to update/modularise pipeline code anyway, so perhaps makes sense to include docker container options for each process
-// hopefully this might sidestep issue\
 
 // notes: reason for such long barcode is to ensure different cells/tat constructs don't have the same barcode by chance; allows us to count
 
 
 // how to multiplex? group table by site & mutant, extract common barcodes and use this to combine?
 // need to identify 'true' barcodes from sequencing artifacts;
-// need to find how many things truly sequenced!
 // plot cumulative fraction of reads and find the knee
 
-//  python script to merge adjacent snps (maybe R better for tabular data)
+// script to merge adjacent snps (maybe R better for tabular data)
 //Read the input VCF file using a VCF parsing library or custom VCF parsing code in Python.
 //Iterate over the variants in the VCF file.
 //Identify adjacent SNPs based on their positions and alleles. You may consider a specific distance threshold or genomic context for merging.
@@ -88,12 +90,12 @@ params.tat_flank_5prime = "GAATTC"
 params.tat_flank_3prime = "GCGATCGC"
 params.umi_5prime = 'TGGATCCGGTACCGAGGAGATCTG'
 params.umi_3prime = 'GCGATCGC'
-params.l_distance = 2 // max Levenshtein distance for clustering 
+params.l_distance = 5 // max Levenshtein distance for clustering 
 params.scripts = "$projectDir/bin" // scripts for pipeline here
 params.reference = "$projectDir/docs/AF324493.2.fa" // maybe look at building the reference 
 params.reference_gbk = "AF324493.2" //reference genbank accession no
 params.bed ="$projectDir/docs/intervals.bed" // genomic interval (0-based) for tat 
-params.min_cluster_size = 5 // minimum number of reads per cluster.. need to find sensible number. For this amount of data is 5 good? To use all just input 1 here
+params.min_cluster_size = 3 // minimum number of reads per cluster.. need to find sensible number. For this amount of data is 5 good? To use all just input 1 here
 // params.multiqc = 
 //params.outdir = "$projectDir/test-run'
 
@@ -108,7 +110,7 @@ def helpMessage() {
     nextflow run nf-gigaassay  -profile conda --reads 'path/to/*.fastq.gz' --skip_subsample
     Mandatory arguments:
       --reads [str]                 Full path to directory containing the input reads for analysis
-      -profile [str]                Configuration profile to use. Currently supports conda & singularity 
+      -profile [str]                Configuration profile to use. Currently supports conda, docker & singularity 
                             
     Options:
       --skip_subsample [boolean]     For testing
@@ -141,6 +143,7 @@ log.info """\
     umi_5'_flank : ${params.umi_5prime}
     umi_3'_flank : ${params.umi_3prime}
     clustering_distance_threshold : ${params.l_distance}
+    min_cluster_size : ${params.min_cluster_size}
     """
     .stripIndent(true)
 
@@ -151,7 +154,13 @@ log.info """\
 
 process BWA_MEM_INDEX {
     tag "Indexing reference genome"
+    label 'process_high'
     publishDir "${params.outdir}/reference", mode: 'copy'
+
+    conda "bioconda::bwa=0.7.17"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/bwa:0.7.17--hed695b0_7' :
+        'biocontainers/bwa:0.7.17--hed695b0_7' }"
 
     input:
     path fasta
@@ -173,7 +182,13 @@ process BWA_MEM_INDEX {
 
 process SNPEFF_BUILD {
     tag "Building SNPeff Annotation Database for $reference_gbk"
+    label 'process_high'
     publishDir "${params.outdir}/annotation/snpeff", mode:'copy'
+
+    conda "bioconda::snpeff=5.1"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/snpeff:5.1--hdfd78af_2' :
+        'biocontainers/snpeff:5.1--hdfd78af_2' }"
 
     input:
     val reference_gbk
@@ -196,7 +211,13 @@ process SNPEFF_BUILD {
 
 process SEQTK_SAMPLE {
     tag "Subsampling $sample_id raw reads"
+    label 'process_low'
     publishDir "${params.outdir}/preprocessing/subsample", mode: 'copy'
+
+    conda "bioconda::seqtk=1.3"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/seqtk:1.3--h5bf99c6_3' :
+        'biocontainers/seqtk:1.3--h5bf99c6_3' }"
 
     input:
     tuple val(sample_id), path(reads)
@@ -225,7 +246,13 @@ process SEQTK_SAMPLE {
 
 process FASTQC_RAW {
     tag "Running FASTQC on $sample_id fastq files"
+    label 'process_medium'
     publishDir "${params.outdir}/preprocessing/fastqc_raw", mode: 'copy'
+
+    conda "bioconda::fastqc=0.11.9"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/fastqc:0.11.9--0' :
+        'biocontainers/fastqc:0.11.9--0' }"
     
     input: 
     tuple val(sample_id), path(reads)
@@ -236,7 +263,8 @@ process FASTQC_RAW {
     script:
     """
     mkdir ${sample_id}_fastqc_raw_logs
-    fastqc -o ${sample_id}_fastqc_raw_logs -q ${reads}
+    
+    fastqc  --threads $task.cpus -o ${sample_id}_fastqc_raw_logs -q ${reads}
     """
 }
 
@@ -246,7 +274,13 @@ process FASTQC_RAW {
 
 process BBMERGE { //optimise memory usage
     tag "Merging overlapping $sample_id reads"
+    label 'process_medium'
     publishDir "${params.outdir}/preprocessing/merged_reads", mode: 'copy'
+
+    conda "bioconda::bbmap=39.01"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/bbmap:39.01--h5c4e2a8_0':
+        'biocontainers/bbmap:39.01--h5c4e2a8_0' }"
 
 
    input:
@@ -260,7 +294,9 @@ process BBMERGE { //optimise memory usage
 
    script:
    """
+   maxmem=\$(echo \"$task.memory\"| sed 's/ GB/g/g')
    bbmerge.sh \
+   -Xmx\$maxmem \
    in1=${reads[0]} in2=${reads[1]} \
    out=${sample_id}_merge.fastq.gz \
    outu1=${sample_id}_U1merge.fastq.gz outu2=${sample_id}_U2merge.fastq.gz \
@@ -293,6 +329,11 @@ process BBMERGE { //optimise memory usage
     tag "Running bbduk trimming $sample_id reads"
     publishDir "${params.outdir}/preprocessing/trimmed_reads", mode:'copy'
 
+    conda "bioconda::bbmap=39.01"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/bbmap:39.01--h5c4e2a8_0':
+        'biocontainers/bbmap:39.01--h5c4e2a8_0' }"
+
     input: 
     tuple val(sample_id), path(reads)
     path(adapters)
@@ -316,7 +357,13 @@ process BBMERGE { //optimise memory usage
 
 process CUTADAPT_TRIM {
     tag "Trimming reads from $sample_id"
+    label 'process_medium'
     publishDir "${params.outdir}/preprocessing/trimmed_reads", mode:'copy'
+
+    conda "bioconda::cutadapt=3.4"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/cutadapt:3.4--py39h38f01e4_1' :
+        'biocontainers/cutadapt:3.4--py39h38f01e4_1' }"
 
     input: 
     tuple val(sample_id), path(reads)
@@ -347,6 +394,11 @@ process CUTADAPT_TRIM {
     tag "Length filtering $sample_id reads"
     publishDir "${params.outdir}/preprocessing/filtered_reads", mode:'copy'
 
+    conda "bioconda::bbmap=39.01"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/bbmap:39.01--h5c4e2a8_0':
+        'biocontainers/bbmap:39.01--h5c4e2a8_0' }"
+
     input: 
     tuple val(sample_id), path(reads)
 
@@ -374,6 +426,11 @@ process CUTADAPT_TRIM {
     tag "Extracting UMIs from $sample_id"
     publishDir "${params.outdir}/preprocessing/umi_fastq", mode:'copy'
 
+    conda "bioconda::cutadapt=3.4"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/cutadapt:3.4--py39h38f01e4_1' :
+        'biocontainers/cutadapt:3.4--py39h38f01e4_1' }"
+
     input: 
     tuple val(sample_id), path(reads)
     val umi_5
@@ -397,7 +454,13 @@ process CUTADAPT_TRIM {
 
 process CUTADAPT_UMI {
     tag "Extracting UMIs from $sample_id"
+    label 'process_medium'
     publishDir "${params.outdir}/umi/umi_barcodes", mode:'copy'
+
+    conda "bioconda::cutadapt=3.4"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/cutadapt:3.4--py39h38f01e4_1' :
+        'biocontainers/cutadapt:3.4--py39h38f01e4_1' }"
 
     input: 
     tuple val(sample_id), path(reads)
@@ -425,6 +488,11 @@ process CUTADAPT_UMI {
 // process UMITOOLS_EXTRACT {
 //     tag "Extracting UMIs from $sample_id"
 //     publishDir "${params.outdir}/umi/umi_reads", mode:'copy'
+
+    //conda "bioconda::umi_tools=1.1.4"
+    //container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+     //   'https://depot.galaxyproject.org/singularity/umi_tools:1.1.4--py38hbff2b2d_1' :
+     //   'biocontainers/umi_tools:1.1.4--py38hbff2b2d_1' }"
 
 //     input: 
 //     tuple val(sample_id), path(reads)
@@ -526,7 +594,13 @@ backup umi-tools extract with full lenght reads
 
 process STARCODE_CLUSTERING { 
     tag "Creating global clusters from UMI barcodes"
+    label 'process_medium'
     publishDir "${params.outdir}/clustering/starcode", mode:'copy'
+
+    conda "bioconda::starcode==1.4"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/starcode:1.4--hec16e2b_3' :
+        'biocontainers/starcode:1.4--hec16e2b_3' }"
 
     input: 
     tuple val(sample_id), path(reads)
@@ -557,8 +631,14 @@ process STARCODE_CLUSTERING {
  */
 
 process FILTER_CLUSTERS { 
-    tag "Removing clusters with less than $min_cluster_size sequences"
+    tag "Removing clusters with few sequences"
+    label 'process_single'
     publishDir "${params.outdir}/clustering/starcode", mode:'copy'
+
+    conda "conda-forge::python=3.9.5"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/python:3.9--1' :
+        'biocontainers/python:3.9--1' }"
 
     input: 
     tuple val(sample_id), path(clusters_file)
@@ -588,7 +668,13 @@ process FILTER_CLUSTERS {
 
 process DEMULTIPLEX_BARCODES {
     tag "Demultiplex $sample_id fastq files"
+    label 'process_single'
     publishDir "${params.outdir}/clustering/reads/$sample_id", mode:'symlink'
+
+    conda "conda-forge::python=3.9.5"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/python:3.9--1' :
+        'biocontainers/python:3.9--1' }"
 
     input:
     tuple val(sample_id), path(reads), path(clusters_file)
@@ -617,7 +703,13 @@ process DEMULTIPLEX_BARCODES {
 
 process BWA_MEM_ALIGN {
     tag"Aligning $sample_id fastqs against $index"
+    label 'process_high'
     publishDir "${params.outdir}/alignment/bwa-mem/$sample_id", mode:'symlink'
+
+    conda "bioconda::bwa=0.7.17 bioconda::samtools=1.17"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/bwa:0.7.17--hed695b0_7 https://depot.galaxyproject.org/singularity/samtools:1.17--h00cdaf9_0' :
+        'biocontainers/bwa:0.7.17--hed695b0_7 biocontainers/samtools:1.17--h00cdaf9_0' }"
 
     input:
     path index
@@ -631,8 +723,8 @@ process BWA_MEM_ALIGN {
     """  
     INDEX=`find -L ./ -name "*.amb" | sed 's/\\.amb\$//'` #find indexed ref files and strip suffix
 
-    bwa mem -R '@RG\\tID:"${barcode}"\\tSM:${sample_id}\\tPL:Illumina' \$INDEX $reads 2> ${sample_id}_${barcode}.bwa.err \
-        | samtools sort -O bam -o ${sample_id}_${barcode}.sorted.bam
+    bwa mem -t ${task.cpus} -R '@RG\\tID:"${barcode}"\\tSM:${sample_id}\\tPL:Illumina' \$INDEX $reads 2> ${sample_id}_${barcode}.bwa.err \
+        | samtools sort -@ ${task.cpus} -O bam -o ${sample_id}_${barcode}.sorted.bam
     """
 
 }
@@ -673,22 +765,29 @@ process BWA_MEM_ALIGN {
  */
 
 process FREEBAYES {
-  tag "Calling variants on  $sample_id $barcode file"
-  publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'symlink'
 
-  input:
-  path index
-  path bed
-  tuple val(sample_id), val(barcode), path(bam)   
+    tag "Calling variants on  $sample_id $barcode file"
+    label 'process_high'
+    publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'symlink'
 
-  output:
-  tuple val(sample_id), val(barcode), path("*.vcf"), emit: vcf
+    conda "bioconda::freebayes=1.3.6"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/freebayes:1.3.6--hbfe0e7f_2' :
+        'biocontainers/freebayes:1.3.6--hbfe0e7f_2' }"
+
+    input:
+    path index
+    path bed
+    tuple val(sample_id), val(barcode), path(bam)   
+
+    output:
+    tuple val(sample_id), val(barcode), path("*.vcf"), emit: vcf
 
 
-  script:
-  """
-  freebayes --min-alternate-count 2 --min-mapping-quality 30  --min-base-quality 20 --use-best-n-alleles 3 -f $index $bam > ${sample_id}_${barcode}.vcf
-  """
+    script:
+    """
+    freebayes --min-alternate-count 2 --min-mapping-quality 30  --min-base-quality 20 --use-best-n-alleles 3 -f $index $bam > ${sample_id}_${barcode}.vcf
+    """
 }
 
 //bcftools variant calling options
@@ -704,26 +803,32 @@ process FREEBAYES {
 
 process BCFTOOLS_MPILEUP_CALL {
 
-  tag "Calling variants on demultiplexed files"
-  publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'copy'
+    tag "Calling variants on demultiplexed files"
+    label 'process_medium'
+    publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'copy'
 
-  input:
-  path index
-  tuple val(sample_id), val(barcode), path(bam)   
+    conda "bioconda::bcftools=1.17"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/bcftools:1.17--haef29d1_0':
+        'biocontainers/bcftools:1.17--haef29d1_0' }"
 
-  output:
-  tuple val(sample_id), val(barcode), path("*.bcf"), emit: vcf
+    input:
+    path index
+    tuple val(sample_id), val(barcode), path(bam)   
+
+    output:
+    tuple val(sample_id), val(barcode), path("*.bcf"), emit: vcf
   
-
-  script:
-  """
-  bcftools mpileup -I -Ou -f $index $bam | bcftools call --ploidy 2 --skip-variants indels --consensus-caller --variants-only -Ou -o ${sample_id}_${barcode}.bcf
-  """
+    script:
+    """
+    bcftools mpileup -I -Ou -f $index $bam | bcftools call --ploidy 2 --skip-variants indels --consensus-caller --variants-only -Ou -o ${sample_id}_${barcode}.bcf
+    """
 }
 
 //bcftools variant calling options
 // view:
 // filter variants outside the target sequence (tat) & those with low supporting information: require at least 60% of reads to support call
+// dropping this filtering step above; not needed as require 60% of reads to map anyway; bcftools view --targets "AF324493.2:5829-6044,AF324493.2:8368-8414" -q 0.6:nref $vcf -Ou |
 // annotate vcf id column with sample_barcode info 
 // normalise the variant calls (lelft-align & max parisomony) 
 // output is compressed bcf for feeding into concat input
@@ -731,35 +836,42 @@ process BCFTOOLS_MPILEUP_CALL {
 
 process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
     tag "Removing off-target & low-support variants. Normalizing variants in files"
+    label 'process_high'
     publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/$sample_id", mode:'copy'
+
+    conda "bioconda::bcftools=1.17"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/bcftools:1.17--haef29d1_0':
+        'biocontainers/bcftools:1.17--haef29d1_0' }"
+    
     // idea of writing output to seperate folders; but just rename when feeding into channel
-  //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/variants/$sample_id", pattern: "*.norm.bcf", mode:'copy'
-  //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/index/$sample_id", pattern: "*.norm.bcf.csi", mode:'copy'
-  //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/no_calls/$sample_id", pattern: "*.norm.null.bcf", mode:'copy'
+    //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/variants/$sample_id", pattern: "*.norm.bcf", mode:'copy'
+    //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/index/$sample_id", pattern: "*.norm.bcf.csi", mode:'copy'
+    //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/no_calls/$sample_id", pattern: "*.norm.null.bcf", mode:'copy'
 
-  input:
-  path fasta
-  path bed
-  tuple val(sample_id), val(barcode), path(vcf) 
+    input:
+    path fasta
+    path bed
+    tuple val(sample_id), val(barcode), path(vcf) 
 
-  output:
-  tuple val(sample_id), path("*.norm.bcf"), emit: vcf, optional: true
-  tuple val(sample_id), path("*.norm.bcf.csi"), emit: idx, optional: true
+    output:
+    tuple val(sample_id), path("*.norm.bcf"), emit: vcf, optional: true
+    tuple val(sample_id), path("*.norm.bcf.csi"), emit: idx, optional: true
   
 
-  script:
-  """
-  # exit status 0; if SNPs detected process VCF
-  if bcftools view  $vcf | grep -qv '^#'
-  then
-    bcftools view --targets "AF324493.2:5829-6044,AF324493.2:8368-8414" -q 0.6:nref $vcf -Ou | \\
-    bcftools annotate --set-id "${sample_id}_${barcode}" |  \\
-    bcftools norm --fasta-ref $fasta -Ob -o ${sample_id}_${barcode}.norm.bcf
+    script:
+    """
+    # exit status 0; if SNPs detected process VCF
+    if bcftools view  $vcf | grep -qv '^#'
+    then
+        bcftools view -q 0.6:nref $vcf -Ou | \\
+        bcftools annotate --set-id "${sample_id}_${barcode}" |  \\
+        bcftools norm --fasta-ref $fasta -Ob -o ${sample_id}_${barcode}.norm.bcf
 
-    #create tbi index of file
-    bcftools index ${sample_id}_${barcode}.norm.bcf
-  fi
-  """
+        #create tbi index of file
+        bcftools index ${sample_id}_${barcode}.norm.bcf
+    fi
+    """
 
 }
 
@@ -768,7 +880,13 @@ process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
 
 process BCFTOOLS_CONCAT {
     tag " Concatenating sample $sample_id vcfs"
+    label 'process_low'
     publishDir "${params.outdir}/annotation/bcftools/concat/${params.caller}/$sample_id", mode:'copy'
+
+    conda "bioconda::bcftools=1.17"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/bcftools:1.17--haef29d1_0':
+        'biocontainers/bcftools:1.17--haef29d1_0' }"
 
     input:
     tuple val(sample_id), path(vcfs), path(idxs)
@@ -791,7 +909,13 @@ process BCFTOOLS_CONCAT {
 
 process SNPEFF_ANNO {
     tag "Annotating variants in $sample_id $barcode"
+    label 'process_medium'
     publishDir "${params.outdir}/annotation/snpeff/${params.caller}/$sample_id", mode:'copy'
+
+    conda "bioconda::snpeff=5.1"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/snpeff:5.1--hdfd78af_2' :
+        'biocontainers/snpeff:5.1--hdfd78af_2' }"
 
     input:
     path snpeff_db
@@ -812,8 +936,16 @@ process SNPEFF_ANNO {
 
     //no_stats as want to prevent snpeff filtering my variants
     // other option emit the data dir and config file as seperate channels and then can easily specify
+    script:
+    def avail_mem = 6144
+    if (!task.memory) {
+        log.info '[snpEff] Available memory not known - defaulting to 6GB. Specify process memory requirements to change this.'
+    } else {
+        avail_mem = (task.memory.mega*0.8).intValue()
+    }
     """  
-    snpEff ann -nodownload -v ${reference_v} \\
+    snpEff ann  -Xmx${avail_mem}M \\
+     -nodownload -v ${reference_v} \\
      -c ${snpeff_config} \\
      -csvStats -hgvs \\
      -noStats \\
@@ -864,6 +996,11 @@ process MULTIQC_RAW {
     tag "Running MULTIQC on raw fastqc files"
     publishDir "${params.outdir}/preprocessing/multiqc_raw", mode: 'copy'
     
+    conda "bioconda::multiqc=1.15"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/multiqc:1.15--pyhdfd78af_0' :
+        'biocontainers/multiqc:1.15--pyhdfd78af_0' }"
+
     input: 
     path("*") // all input supplied in workflow multiqc config???
 
