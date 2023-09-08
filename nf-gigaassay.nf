@@ -264,7 +264,10 @@ process FASTQC_RAW {
     """
     mkdir ${sample_id}_fastqc_raw_logs
     
-    fastqc  --threads $task.cpus -o ${sample_id}_fastqc_raw_logs -q ${reads}
+    fastqc \\
+        --threads $task.cpus \\
+        -o ${sample_id}_fastqc_raw_logs \\
+        -q ${reads}
     """
 }
 
@@ -283,27 +286,28 @@ process BBMERGE { //optimise memory usage
         'biocontainers/bbmap:39.01--h5c4e2a8_0' }"
 
 
-   input:
-   tuple val(sample_id), path(reads)
+    input:
+    tuple val(sample_id), path(reads)
 
-   output:
-   tuple val(sample_id), path("*_merge.fastq.gz"), emit: merged_reads
-   tuple val(sample_id), path("*_U{1,2}merge.fastq.gz")
-   path("*.txt")
-   path("*.log")
+    output:
+    tuple val(sample_id), path("*_merge.fastq.gz"), emit: merged_reads
+    tuple val(sample_id), path("*_U{1,2}merge.fastq.gz")
+    path("*.txt")
+    path("*.log")
 
-   script:
-   """
-   maxmem=\$(echo \"$task.memory\"| sed 's/ GB/g/g')
-   bbmerge.sh \
-   -Xmx\$maxmem \
-   in1=${reads[0]} in2=${reads[1]} \
-   out=${sample_id}_merge.fastq.gz \
-   outu1=${sample_id}_U1merge.fastq.gz outu2=${sample_id}_U2merge.fastq.gz \
-   outinsert=${sample_id}_insertinfo.txt ihist=insert-histogram.txt \
-   minoverlap=20 maxratio=0.15 \
-   &> ${sample_id}_bbbmerge.log    
-   """
+    script:
+    """
+    maxmem=\$(echo \"$task.memory\"| sed 's/ GB/g/g') 
+
+    bbmerge.sh \\
+        -Xmx\$maxmem \\
+        in1=${reads[0]} in2=${reads[1]} \\
+        out=${sample_id}_merge.fastq.gz \\
+        outu1=${sample_id}_U1merge.fastq.gz outu2=${sample_id}_U2merge.fastq.gz \\
+        outinsert=${sample_id}_insertinfo.txt ihist=insert-histogram.txt \\
+        minoverlap=20 maxratio=0.15 \\
+        &> ${sample_id}_bbbmerge.log    
+    """
 }
 
 //todo check read proportion
@@ -376,14 +380,15 @@ process CUTADAPT_TRIM {
 
     script:
     """
-    cutadapt \
-    -g ${tat_flank_5prime}...${tat_flank_3prime} \
-    ${reads} -o ${sample_id}_trim.fastq.gz \
-    -q 10 \
-    --minimum-length 320 \
-    --discard-untrimmed \
-    --report minimal \
-    > ${sample_id}_cutadapt.log
+    cutadapt \\
+        --cores $task.cpus \\
+        -g ${tat_flank_5prime}...${tat_flank_3prime} \\
+        ${reads} -o ${sample_id}_trim.fastq.gz \\
+        -q 10 \\
+        --minimum-length 320 \\
+        --discard-untrimmed \\
+        --report minimal \\
+        > ${sample_id}_cutadapt.log
     """
 }
 
@@ -472,11 +477,13 @@ process CUTADAPT_UMI {
 
     script:
     """
-    cutadapt \
-    -g ${umi_5prime} \
-    ${reads} -o ${sample_id}_umi.fastq.gz \
-    --report minimal \
-    > ${sample_id}_cutadapt.log
+    cutadapt \\
+        --cores $task.cpus \\
+        -g ${umi_5prime} \\
+        ${reads} \\
+        -o ${sample_id}_umi.fastq.gz \\
+        --report minimal \\
+        > ${sample_id}_cutadapt.log
     """
 }
 
@@ -612,13 +619,14 @@ process STARCODE_CLUSTERING {
 
     script:
     """
-    starcode \
-    -i <(cat ${reads} | gzip -cd) \
-    --output ${sample_id}_starcode_umi_clusters.txt \
-    -s \
-    --seq-id \
-    --dist ${l_distance} \
-    2> ${sample_id}_starcode_umi_clusters.log
+    starcode \\
+        --threads $task.cpus \\
+        -i <(cat ${reads} | gzip -cd) \\
+        --output ${sample_id}_starcode_umi_clusters.txt \\
+        --sphere \\
+        --seq-id \\
+        --dist ${l_distance} \\
+        2> ${sample_id}_starcode_umi_clusters.log
 
     gzip ${sample_id}_starcode_umi_clusters.txt
     """
@@ -686,12 +694,12 @@ process DEMULTIPLEX_BARCODES {
 
     script:
     """
-    python ${scripts}/demux_index_optim_v2.py \
-    --fastq_path ${reads} \
-    --barcode_path ${clusters_file} \
-    --sample_name ${sample_id} \
-    --output_dir './'
-    > ${sample_id}_demux.log
+    python ${scripts}/demux_index_optim_v2.py \\
+        --fastq_path ${reads} \\
+        --barcode_path ${clusters_file} \\
+        --sample_name ${sample_id} \\
+        --output_dir './' \\
+        > ${sample_id}_demux.log
     """
 }
 
@@ -723,7 +731,12 @@ process BWA_MEM_ALIGN {
     """  
     INDEX=`find -L ./ -name "*.amb" | sed 's/\\.amb\$//'` #find indexed ref files and strip suffix
 
-    bwa mem -t ${task.cpus} -R '@RG\\tID:"${barcode}"\\tSM:${sample_id}\\tPL:Illumina' \$INDEX $reads 2> ${sample_id}_${barcode}.bwa.err \
+    bwa mem \\
+        -t ${task.cpus} \\
+        -R '@RG\\tID:"${barcode}"\\tSM:${sample_id}\\tPL:Illumina' \\
+        \$INDEX \\
+        $reads \\
+        2> ${sample_id}_${barcode}.bwa.err \\
         | samtools sort -@ ${task.cpus} -O bam -o ${sample_id}_${barcode}.sorted.bam
     """
 
@@ -761,6 +774,8 @@ process BWA_MEM_ALIGN {
  * Variant Calling
  * Using  a combination of freebayes & bcftools
  *   freebayes --ploidy 2 --targets $bed --min-alternate-fraction 0.5 --min-alternate-count 1 --min-mapping-quality 1  --min-base-quality 3 --use-best-n-alleles=1 -f $index $bam > ${sample_id}_${barcode}.freebayes.vcf
+ *   --min-alternate-count 2: the default
+ *   using min cluster size as min alternate count; all barcodes should have same mutations
  * --use-best-n-alleles as only one site is mutated only take best site (SNPS vs MNPs? how does freebayes distinguish take 3 for now)
  */
 
@@ -786,7 +801,14 @@ process FREEBAYES {
 
     script:
     """
-    freebayes --min-alternate-count 2 --min-mapping-quality 30  --min-base-quality 20 --use-best-n-alleles 3 -f $index $bam > ${sample_id}_${barcode}.vcf
+    freebayes \\
+        --min-alternate-fraction 0.6 \\
+        --min-mapping-quality 20  \\
+        --min-base-quality 20 \\
+        --use-best-n-alleles 3 \\
+        -f $index \\
+        $bam \\
+        > ${sample_id}_${barcode}.vcf
     """
 }
 
@@ -821,7 +843,16 @@ process BCFTOOLS_MPILEUP_CALL {
   
     script:
     """
-    bcftools mpileup -I -Ou -f $index $bam | bcftools call --ploidy 2 --skip-variants indels --consensus-caller --variants-only -Ou -o ${sample_id}_${barcode}.bcf
+    bcftools mpileup \\
+        -I -Ou \\
+        -f $index \\
+        $bam \\
+        | bcftools call \\
+        --ploidy 2 \\
+        --skip-variants indels \\
+        --consensus-caller \\
+        --variants-only \\
+        -Ou -o ${sample_id}_${barcode}.bcf
     """
 }
 
@@ -898,7 +929,11 @@ process BCFTOOLS_CONCAT {
     """
     # create list of input files
     find -L ./ -name "*.norm.bcf" > vcfs_list
-    bcftools concat --allow-overlaps --file-list ./vcfs_list --output ${sample_id}.norm.combined.vcf
+    
+    bcftools concat \\
+        --allow-overlaps \\
+        --file-list ./vcfs_list \\
+        --output ${sample_id}.norm.combined.vcf
     """
 }
 
@@ -944,11 +979,12 @@ process SNPEFF_ANNO {
         avail_mem = (task.memory.mega*0.8).intValue()
     }
     """  
-    snpEff ann  -Xmx${avail_mem}M \\
-     -nodownload -v ${reference_v} \\
-     -c ${snpeff_config} \\
-     -csvStats -hgvs \\
-     -noStats \\
+    snpEff ann  \\
+        -Xmx${avail_mem}M \\
+        -nodownload -v ${reference_v} \\
+        -c ${snpeff_config} \\
+        -csvStats -hgvs \\
+        -noStats \\
      ${vcf} > ${sample_id}.ann.vcf
     """
 }
