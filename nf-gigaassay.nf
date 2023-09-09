@@ -13,7 +13,9 @@
 */
 
 // 09-09-23
+// test singularity/docker on wynthon 
 // conda env works; need to get singularity/docker running
+// snpeff build; make optional to just supply this on cl instead (not really NB anyway..)
 // remove the variant filtering stepoutside the sites OI, can filter these sites after variant calling performed (too)
 
 //18-08-23
@@ -160,7 +162,7 @@ process BWA_MEM_INDEX {
     conda "bioconda::bwa=0.7.17"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/bwa:0.7.17--hed695b0_7' :
-        'biocontainers/bwa:0.7.17--hed695b0_7' }"
+        'quay.io/biocontainers/bwa:0.7.17--hed695b0_7' }"
 
     input:
     path fasta
@@ -182,13 +184,13 @@ process BWA_MEM_INDEX {
 
 process SNPEFF_BUILD {
     tag "Building SNPeff Annotation Database for $reference_gbk"
-    label 'process_high'
+    label 'process_low'
     publishDir "${params.outdir}/annotation/snpeff", mode:'copy'
 
-    conda "bioconda::snpeff=5.1"
+    conda " bioconda::snpeff=5.1"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
-        'https://depot.galaxyproject.org/singularity/snpeff:5.1--hdfd78af_2' :
-        'biocontainers/snpeff:5.1--hdfd78af_2' }"
+        'https://depot.galaxyproject.org/singularity/mulled-v2-2104de94fc3275c05faf3d41165a700b6e0c9ef9:e29049f6b1f5a6238a29af1b0f72ae3651ae5534-0' :
+        'quay.io/biocontainers/mulled-v2-2104de94fc3275c05faf3d41165a700b6e0c9ef9:e29049f6b1f5a6238a29af1b0f72ae3651ae5534-0' }"
 
     input:
     val reference_gbk
@@ -217,7 +219,7 @@ process SEQTK_SAMPLE {
     conda "bioconda::seqtk=1.3"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/seqtk:1.3--h5bf99c6_3' :
-        'biocontainers/seqtk:1.3--h5bf99c6_3' }"
+        'quay.io/biocontainers/seqtk:1.3--h5bf99c6_3' }"
 
     input:
     tuple val(sample_id), path(reads)
@@ -252,7 +254,7 @@ process FASTQC_RAW {
     conda "bioconda::fastqc=0.11.9"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/fastqc:0.11.9--0' :
-        'biocontainers/fastqc:0.11.9--0' }"
+        'quay.io/biocontainers/fastqc:0.11.9--0' }"
     
     input: 
     tuple val(sample_id), path(reads)
@@ -283,7 +285,7 @@ process BBMERGE { //optimise memory usage
     conda "bioconda::bbmap=39.01"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/bbmap:39.01--h5c4e2a8_0':
-        'biocontainers/bbmap:39.01--h5c4e2a8_0' }"
+        'quay.io/biocontainers/bbmap:39.01--h5c4e2a8_0' }"
 
 
     input:
@@ -367,7 +369,7 @@ process CUTADAPT_TRIM {
     conda "bioconda::cutadapt=3.4"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/cutadapt:3.4--py39h38f01e4_1' :
-        'biocontainers/cutadapt:3.4--py39h38f01e4_1' }"
+        'quay.io/biocontainers/cutadapt:3.4--py39h38f01e4_1' }"
 
     input: 
     tuple val(sample_id), path(reads)
@@ -465,7 +467,7 @@ process CUTADAPT_UMI {
     conda "bioconda::cutadapt=3.4"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/cutadapt:3.4--py39h38f01e4_1' :
-        'biocontainers/cutadapt:3.4--py39h38f01e4_1' }"
+        'quay.io/biocontainers/cutadapt:3.4--py39h38f01e4_1' }"
 
     input: 
     tuple val(sample_id), path(reads)
@@ -607,7 +609,7 @@ process STARCODE_CLUSTERING {
     conda "bioconda::starcode==1.4"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/starcode:1.4--hec16e2b_3' :
-        'biocontainers/starcode:1.4--hec16e2b_3' }"
+        'quay.io/biocontainers/starcode:1.4--hec16e2b_3' }"
 
     input: 
     tuple val(sample_id), path(reads)
@@ -646,7 +648,7 @@ process FILTER_CLUSTERS {
     conda "conda-forge::python=3.9.5"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/python:3.9--1' :
-        'biocontainers/python:3.9--1' }"
+        'quay.io/biocontainers/python:3.9--1' }"
 
     input: 
     tuple val(sample_id), path(clusters_file)
@@ -682,7 +684,7 @@ process DEMULTIPLEX_BARCODES {
     conda "conda-forge::python=3.9.5"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/python:3.9--1' :
-        'biocontainers/python:3.9--1' }"
+        'quay.io/biocontainers/python:3.9--1' }"
 
     input:
     tuple val(sample_id), path(reads), path(clusters_file)
@@ -717,7 +719,7 @@ process BWA_MEM_ALIGN {
     conda "bioconda::bwa=0.7.17 bioconda::samtools=1.17"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/bwa:0.7.17--hed695b0_7 https://depot.galaxyproject.org/singularity/samtools:1.17--h00cdaf9_0' :
-        'biocontainers/bwa:0.7.17--hed695b0_7 biocontainers/samtools:1.17--h00cdaf9_0' }"
+        'quay.io/biocontainers/bwa:0.7.17--hed695b0_7 biocontainers/samtools:1.17--h00cdaf9_0' }"
 
     input:
     path index
@@ -788,7 +790,7 @@ process FREEBAYES {
     conda "bioconda::freebayes=1.3.6"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/freebayes:1.3.6--hbfe0e7f_2' :
-        'biocontainers/freebayes:1.3.6--hbfe0e7f_2' }"
+        'quay.io/biocontainers/freebayes:1.3.6--hbfe0e7f_2' }"
 
     input:
     path index
@@ -832,7 +834,7 @@ process BCFTOOLS_MPILEUP_CALL {
     conda "bioconda::bcftools=1.17"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/bcftools:1.17--haef29d1_0':
-        'biocontainers/bcftools:1.17--haef29d1_0' }"
+        'quay.io/biocontainers/bcftools:1.17--haef29d1_0' }"
 
     input:
     path index
@@ -873,7 +875,7 @@ process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
     conda "bioconda::bcftools=1.17"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/bcftools:1.17--haef29d1_0':
-        'biocontainers/bcftools:1.17--haef29d1_0' }"
+        'quay.io/biocontainers/bcftools:1.17--haef29d1_0' }"
     
     // idea of writing output to seperate folders; but just rename when feeding into channel
     //  publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/variants/$sample_id", pattern: "*.norm.bcf", mode:'copy'
@@ -917,7 +919,7 @@ process BCFTOOLS_CONCAT {
     conda "bioconda::bcftools=1.17"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/bcftools:1.17--haef29d1_0':
-        'biocontainers/bcftools:1.17--haef29d1_0' }"
+        'quay.io/biocontainers/bcftools:1.17--haef29d1_0' }"
 
     input:
     tuple val(sample_id), path(vcfs), path(idxs)
@@ -950,7 +952,7 @@ process SNPEFF_ANNO {
     conda "bioconda::snpeff=5.1"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/snpeff:5.1--hdfd78af_2' :
-        'biocontainers/snpeff:5.1--hdfd78af_2' }"
+        'quay.io/biocontainers/snpeff:5.1--hdfd78af_2' }"
 
     input:
     path snpeff_db
@@ -1035,7 +1037,7 @@ process MULTIQC_RAW {
     conda "bioconda::multiqc=1.15"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
         'https://depot.galaxyproject.org/singularity/multiqc:1.15--pyhdfd78af_0' :
-        'biocontainers/multiqc:1.15--pyhdfd78af_0' }"
+        'quay.io/biocontainers/multiqc:1.15--pyhdfd78af_0' }"
 
     input: 
     path("*") // all input supplied in workflow multiqc config???
