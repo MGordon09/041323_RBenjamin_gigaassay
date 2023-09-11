@@ -2,14 +2,12 @@ Try umitools whitelist for barcode extraction rather than cutadapt as will recor
 Maybe first use cutadapt as easier 
 
 Questions:
+- proportion of our barcodes that are noise?? num=$(gzip -dc ./230523_0.01_test/clustering/starcode/SRR20707784_starcode_umi_clusters.txt.gz | cut  -f2 | ggrep "[^1]"  | wc -l ); denom=$(gzip -dc ./230523_0.01_test/clustering/starcode/SRR20707784_starcode_umi_clusters.txt.gz | wc -l); echo $num; echo $denom; echo "$num/$denom" | bc -l
+  need to run for full sample and perhaps drop clusters with 1 read
+
 -  bed file is 0 based, half =-pne and genbank is 1-based, so have converted bed file
-- do you guys trim reads of final 32bp after barcode matching
-- Really in-depth sequencing.. Why not remove duplicates or maybe subsample to reduce runtime?
-- Why merge reads prior to trimming adapters?
-- Starcode cluster params
-- cluster then seperate? are these clusters genuine?
+- Why merge reads prior to trimming adapters? for length filtering
 - demultiplex script & how to handle I/O bottleneck from number of reads... could we just discard reads that don't match barcode? So much data as is..
-- Portion of read to use as reference (green only?) - shorter more efficient computationally
 - Need to find way to filter reads if the barcodes are shorter than 32bp before processing to speed up
 - OUtput that we need
 - Could maybe create a barcode file from clustering results?
@@ -26,24 +24,31 @@ Notes:
 - instead of splitting files like this, could we add consensus barcode to read header and retain this information in bam file? if the samples are different, then we could call variants on the bam and just write to csv...
 
 
-Demultiplexing step complete, but need to either i) cluster barcodes seperately or ii) combine the clustering & demultiplexing in one step
-For now cluster & demultiplex seperately. Can combine if required 
-
 Used info here to create my own custom db
 https://www.biostars.org/p/432180/
 
-#custom scripts
-#identify aa substitution - supply the aa sequence of ref tat
-#supply dict for nucleic acid to aa conversion
-#given posittion of variant, reading frame, sub in the aa change (if any) and give position
-#for each variant file, sub in the aa substitution
+24/05/23
+----
+Testing UMI-tools whitelist on the subsampled files to identify cell barcodes. Compare with other clustering tools
+If using run on merge rather than trimmed reads
+umi_tools whitelist --method 'reads' --knee-method "density" --error-correct-threshold --plot-prefix 'test.out.umitools' --ed-above-threshold 'discard' --extract-method=regex --bc-pattern='.+(?P<discard_1>TGGATCCGGTACCGAGGAGATCTG){s<=2}(?P<cell_1>.{32}){s<=2}(?P<discard_2>GCGATCGC.+)$
+Even with full file, only 40% of the reads have more than one member of the
 
 
 #SNPeff dependencies, configs is stored under /Users/martingordon/anaconda3/envs/gigaassay/share/snpeff-5.1-2
 # added HIV-1 to the config file
 
+16/08/23
+---
+Testing the pipelin with minimal number of reads
+Mainly we want to see how the vcf merging works; think we were filtering reads that were incoreect size
 
-#test data
-Run with 0.01 of the dataset workdir stored as work.bak
-1e72ac75-4472-470c-807e-dc515f7ee497 fabulous_waddington
 
+TODO
+---
+Filter out clusters with less than two/five reads
+Filter out VCF files with no vairant calls
+Modularise the pipeline
+Create module config to specify params for each module
+Add docker/singualrity support
+Update base.config to specify resources

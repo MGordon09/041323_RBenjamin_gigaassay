@@ -15,7 +15,7 @@
 # edits to run in conda env 05/2023
 #-------------------------------------------------------------------------------
 
-echo "Acitvate conda environment with SNPeff installed before running"
+#echo "Acitvate conda environment with SNPeff installed before running"
 
 #---
 # Command line arguments
@@ -40,7 +40,8 @@ mkdir -p "$DIR" >/dev/null 2>&1 || true
 
 # Download GenBank file
 echo "Downloading genome $ID"
-curl "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nucleotide&id=$ID&rettype=gbwithparts&retmode=text" > $GENE_FILE
+#curl "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nucleotide&id=$ID&rettype=gbwithparts&retmode=text" > $GENE_FILE
+wget -O $GENE_FILE "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nucleotide&id=$ID&rettype=gbwithparts&retmode=text"
 
 #---
 # Build database

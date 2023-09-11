@@ -14,7 +14,7 @@ import gzip
 #update: index as key & barcodes as val for faster searching
 def read_barcodes(barcode_path):
     barcodes = {}
-    with gzip.open(barcode_path, 'rt') as barcode_file:
+    with open(barcode_path, 'rt') as barcode_file:
         for line in barcode_file:
             barcode_group, barcode_count, barcode_index = line.strip().split('\t')
             for barcode in barcode_index.split(','): #split each index

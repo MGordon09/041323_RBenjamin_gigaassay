@@ -13,7 +13,8 @@
 */
 
 // 09-09-23
-// test singularity/docker on wynthon 
+// troubleshoot pipeline issues; build singularity containerinstalljust uplaod the snpeff config and avoid creating. Also contact Wynton support over conda issue; show the commands you are using
+// test singularity/docker on wynthon.. issues building containers in both evs..
 // conda env works; need to get singularity/docker running
 // snpeff build; make optional to just supply this on cl instead (not really NB anyway..)
 // remove the variant filtering stepoutside the sites OI, can filter these sites after variant calling performed (too)
@@ -92,7 +93,7 @@ params.tat_flank_5prime = "GAATTC"
 params.tat_flank_3prime = "GCGATCGC"
 params.umi_5prime = 'TGGATCCGGTACCGAGGAGATCTG'
 params.umi_3prime = 'GCGATCGC'
-params.l_distance = 5 // max Levenshtein distance for clustering 
+params.l_distance = 2 // max Levenshtein distance for clustering 
 params.scripts = "$projectDir/bin" // scripts for pipeline here
 params.reference = "$projectDir/docs/AF324493.2.fa" // maybe look at building the reference 
 params.reference_gbk = "AF324493.2" //reference genbank accession no
@@ -187,10 +188,10 @@ process SNPEFF_BUILD {
     label 'process_low'
     publishDir "${params.outdir}/annotation/snpeff", mode:'copy'
 
-    conda " bioconda::snpeff=5.1"
+    conda "bioconda::snpeff=5.1"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
-        'https://depot.galaxyproject.org/singularity/mulled-v2-2104de94fc3275c05faf3d41165a700b6e0c9ef9:e29049f6b1f5a6238a29af1b0f72ae3651ae5534-0' :
-        'quay.io/biocontainers/mulled-v2-2104de94fc3275c05faf3d41165a700b6e0c9ef9:e29049f6b1f5a6238a29af1b0f72ae3651ae5534-0' }"
+        'https://depot.galaxyproject.org/singularity/snpeff:5.1--hdfd78af_2' :
+        'quay.io/biocontainers/snpeff:5.1--hdfd78af_2' }"
 
     input:
     val reference_gbk
@@ -616,7 +617,7 @@ process STARCODE_CLUSTERING {
     val l_distance
 
     output:
-    tuple val(sample_id), path("*clusters.txt.gz"), emit: clusters_file
+    tuple val(sample_id), path("*clusters.txt"), emit: clusters_file
     path("*clusters.log")
 
     script:
@@ -630,7 +631,7 @@ process STARCODE_CLUSTERING {
         --dist ${l_distance} \\
         2> ${sample_id}_starcode_umi_clusters.log
 
-    gzip ${sample_id}_starcode_umi_clusters.txt
+    #gzip ${sample_id}_starcode_umi_clusters.txt
     """
  }
 
@@ -641,30 +642,31 @@ process STARCODE_CLUSTERING {
  */
 
 process FILTER_CLUSTERS { 
-    tag "Removing clusters with few sequences"
+    tag "Removing clusters with few reads"
     label 'process_single'
     publishDir "${params.outdir}/clustering/starcode", mode:'copy'
 
-    conda "conda-forge::python=3.9.5"
+    conda "bioconda gzip==1.11"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
-        'https://depot.galaxyproject.org/singularity/python:3.9--1' :
-        'quay.io/biocontainers/python:3.9--1' }"
+        'https://depot.galaxyproject.org/singularity/gzip:1.11' :
+        'quay.io/biocontainers/gzip:1.11' }"
 
     input: 
     tuple val(sample_id), path(clusters_file)
     val cluster_size
 
     output:
-    tuple val(sample_id), path("*clusters.clean.txt.gz"), emit: clusters_file
+    tuple val(sample_id), path("*clusters.clean.txt"), emit: clusters_file
     path("*clusters.clean.log")
 
 
     script:
     """
-    zless ${clusters_file} | awk 'NR==1 { print } NR != 1 && \$2 >= ${cluster_size} { print }' | gzip > ${sample_id}_starcode_umi_clusters.clean.txt.gz
+    #zless ${clusters_file} | awk 'NR==1 { print } NR != 1 && \$2 >= ${cluster_size} { print }' | gzip > ${sample_id}_starcode_umi_clusters.clean.txt.gz
+    cat ${clusters_file} | awk 'NR==1 { print } NR != 1 && \$2 >= ${cluster_size} { print }' > ${sample_id}_starcode_umi_clusters.clean.txt
 
     start_seq=`wc -l  ${clusters_file} | awk '{print \$1}'`
-    end_seq=`wc -l  ${sample_id}_starcode_umi_clusters.clean.txt.gz | awk '{print \$1}'`
+    end_seq=`wc -l ${sample_id}_starcode_umi_clusters.clean.txt | awk '{print \$1}'`
 
     echo "Initial clusters: \$start_seq Remaining clusters: \$end_seq" >  ${sample_id}_starcode_umi_clusters.clean.log
     """
@@ -716,10 +718,10 @@ process BWA_MEM_ALIGN {
     label 'process_high'
     publishDir "${params.outdir}/alignment/bwa-mem/$sample_id", mode:'symlink'
 
-    conda "bioconda::bwa=0.7.17 bioconda::samtools=1.17"
+    conda "bioconda::mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40==c56a3aabc8d64e52d5b9da1e8ecec2031668596d-0"
     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
-        'https://depot.galaxyproject.org/singularity/bwa:0.7.17--hed695b0_7 https://depot.galaxyproject.org/singularity/samtools:1.17--h00cdaf9_0' :
-        'quay.io/biocontainers/bwa:0.7.17--hed695b0_7 biocontainers/samtools:1.17--h00cdaf9_0' }"
+        'https://depot.galaxyproject.org/singularity/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:c56a3aabc8d64e52d5b9da1e8ecec2031668596d-0' :
+        'quay.io/biocontainers/mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40:c56a3aabc8d64e52d5b9da1e8ecec2031668596d-0' }"
 
     input:
     path index
