@@ -288,7 +288,6 @@ process BBMERGE { //optimise memory usage
         'https://depot.galaxyproject.org/singularity/bbmap:39.01--h5c4e2a8_0':
         'quay.io/biocontainers/bbmap:39.01--h5c4e2a8_0' }"
 
-
     input:
     tuple val(sample_id), path(reads)
 
