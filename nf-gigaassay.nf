@@ -12,6 +12,10 @@
 ----------------------------------------------------------------------------------------
 */
 
+//11-09-23
+// cut snpeff build step; just include the annotation using the reference
+//
+
 // 09-09-23
 // troubleshoot pipeline issues; build singularity containerinstalljust uplaod the snpeff config and avoid creating. Also contact Wynton support over conda issue; show the commands you are using
 // test singularity/docker on wynthon.. issues building containers in both evs..
@@ -99,6 +103,8 @@ params.reference = "$projectDir/docs/AF324493.2.fa" // maybe look at building th
 params.reference_gbk = "AF324493.2" //reference genbank accession no
 params.bed ="$projectDir/docs/intervals.bed" // genomic interval (0-based) for tat 
 params.min_cluster_size = 3 // minimum number of reads per cluster.. need to find sensible number. For this amount of data is 5 good? To use all just input 1 here
+params.snpeff_db = "$projectDir/docs/AF324493.2"
+params.snpeff_config = "$projectDir/docs/snpEff.config"
 // params.multiqc = 
 //params.outdir = "$projectDir/test-run'
 
@@ -183,29 +189,29 @@ process BWA_MEM_INDEX {
  * Build SNPEff database using reference files
  */
 
-process SNPEFF_BUILD {
-    tag "Building SNPeff Annotation Database for $reference_gbk"
-    label 'process_low'
-    publishDir "${params.outdir}/annotation/snpeff", mode:'copy'
+// process SNPEFF_BUILD {
+//     tag "Building SNPeff Annotation Database for $reference_gbk"
+//     label 'process_low'
+//     publishDir "${params.outdir}/annotation/snpeff", mode:'copy'
 
-    conda "bioconda::snpeff=5.1"
-    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
-        'https://depot.galaxyproject.org/singularity/snpeff:5.1--hdfd78af_2' :
-        'quay.io/biocontainers/snpeff:5.1--hdfd78af_2' }"
+//     conda "bioconda::snpeff=5.1"
+//     container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+//         'https://depot.galaxyproject.org/singularity/snpeff:5.1--hdfd78af_2' :
+//         'quay.io/biocontainers/snpeff:5.1--hdfd78af_2' }"
 
-    input:
-    val reference_gbk
-    path scripts
+//     input:
+//     val reference_gbk
+//     path scripts
 
-    output:
-    path("data/$reference_gbk"), emit: snpeff_db // dir containing output of SNPEff build process
-    path("snpEff.config"), emit: snpeff_config
+//     output:
+//     path("data/$reference_gbk"), emit: snpeff_db // dir containing output of SNPEff build process
+//     path("snpEff.config"), emit: snpeff_config
 
-    script:
-    """
-    bash ${scripts}/buildDbNcbi.sh $reference_gbk
-    """
-}
+//     script:
+//     """
+//     bash ${scripts}/buildDbNcbi.sh $reference_gbk
+//     """
+// }
 
 
 /*
@@ -958,7 +964,6 @@ process SNPEFF_ANNO {
     input:
     path snpeff_db
     path snpeff_config //path snpeff_config make optional as already available through db path
-    path intervals_bed
     val reference_v
     tuple val(sample_id), path(vcf)
     //tuple val(sample_id), val(barcode), path(vcf)
@@ -1103,6 +1108,17 @@ workflow {
         .set { min_cluster_size_ch }
 
     Channel
+        .value(params.snpeff_config)
+        .set { snpeff_config_ch }
+    
+    Channel
+        .value(params.snpeff_db)
+        .set { snpeff_db_ch }
+
+
+
+    // adding snpeff db and config
+    Channel
         .value(params.scripts)
         .set { scripts_ch }
     
@@ -1117,7 +1133,7 @@ workflow {
 
     // Build reference index & snpeff db
     index_ch         = BWA_MEM_INDEX(reference_ch)
-    snpeffdb_ch      = SNPEFF_BUILD(reference_gbk_ch, scripts_ch)
+    //snpeffdb_ch      = SNPEFF_BUILD(reference_gbk_ch, scripts_ch)
 
     multiqc_input_ch = FASTQC_RAW(read_input_ch)
     merge_reads_ch   = BBMERGE(read_input_ch)
@@ -1185,7 +1201,7 @@ workflow {
     vcf_concat_ch = BCFTOOLS_CONCAT(comb_ch)
 
     // annotate comb variants file w snpEff
-    ann_ch = SNPEFF_ANNO(snpeffdb_ch.snpeff_db, snpeffdb_ch.snpeff_config, scripts_ch, reference_gbk_ch, vcf_concat_ch.vcf)
+    ann_ch = SNPEFF_ANNO(snpeff_db_ch, snpeff_config_ch, reference_gbk_ch, vcf_concat_ch.vcf)
 
     // .map { sample, file_path ->
     //     def umi_id    = file.name.toString().tokenize('_').get(1).tokenize('.demux.fastq.gz').get(0)
