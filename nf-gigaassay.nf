@@ -12,6 +12,10 @@
 ----------------------------------------------------------------------------------------
 */
 
+//TODO package each of the scripts into a script in bind and execute with find xargs 
+// look at top answer below for guidance; find each file and execute seperately
+//https://stackoverflow.com/questions/40700230/find-xargs-execute-chain-of-commands-for-each-file
+
 params.caller = 'freebayes' // use freebayes as default variant caller for MNP handling
 params.adapters = "$projectDir/docs/flanks.fa" // file with sequences to trim surrounding Tat contig
 params.tat_flank_5prime = "GAATTC"
@@ -401,17 +405,25 @@ process DEMULTIPLEX_BARCODES {
     path scripts
 
     output:
-    tuple val(sample_id), path("*.demux.fastq.gz"), emit: demux_reads
+    //tuple val(sample_id), path("*.demux.fastq.gz"), emit: demux_reads
+    tuple val(sample_id), path("demux.files.tar.gz"), emit: demux_folder
     path("*demux.log")
 
     script:
     """
+    # create output dir
+    mkdir -p ./demux.files
+
     python ${scripts}/demux_index_optim_v2.py \\
         --fastq_path ${reads} \\
         --barcode_path ${clusters_file} \\
         --sample_name ${sample_id} \\
-        --output_dir './' \\
+        --output_dir './demux.files/' \\
         > ${sample_id}_demux.log
+
+
+    # compress files
+    tar -vcf demux.files.tar.gz ./demux.files/ 
     """
 }
 
@@ -433,37 +445,40 @@ process BWA_MEM_ALIGN {
 
     input:
     path index
-    tuple val(sample_id), val(barcode), path(reads)
+    tuple val(sample_id), path(demux_folder)
+    path scripts
 
     output:
-    tuple val(sample_id), val(barcode), path("*.sorted.bam"), emit: sorted_bam
-    path("*.bwa.err")
+    tuple val(sample_id), path("bam.files.tar.gz"), emit: bam_folder
 
-    script:
-    """  
-    INDEX=`find -L ./ -name "*.amb" | sed 's/\\.amb\$//'` #find indexed ref files and strip suffix
-
-    bwa mem \\
-        -t ${task.cpus} \\
-        -R '@RG\\tID:"${barcode}"\\tSM:${sample_id}\\tPL:Illumina' \\
-        \$INDEX \\
-        $reads \\
-        2> ${sample_id}_${barcode}.bwa.err \\
-        | samtools sort -@ ${task.cpus} -O bam -o ${sample_id}_${barcode}.sorted.bam
+    shell:
     """
+    tar -xf ${demux_folder}
 
+    # iterate through each file in the tar directory 
+    find ./demux.files -type f -name "*.demux.fastq.gz" -exec ${scripts}/run_bwa_mem_align.sh ${task.cpus} \\{\\} \\;
+
+    # cleanup
+    mkdir ./bam.files
+    mv *{bwa.err,sorted.bam} ./bam.files
+    
+    # compress files
+    tar -vcf bam.files.tar.gz ./bam.files/
+    """
 }
 
 /*
  * Variant Calling
- * Using  a combination of freebayes & bcftools
+ * Using  a combination of freebayes & bcftoolsq
  *   freebayes --ploidy 2 --targets $bed --min-alternate-fraction 0.5 --min-alternate-count 1 --min-mapping-quality 1  --min-base-quality 3 --use-best-n-alleles=1 -f $index $bam > ${sample_id}_${barcode}.freebayes.vcf
  * --use-best-n-alleles as only one site is mutated only take best site (SNPS vs MNPs? how does freebayes distinguish take 3 for now)
+ *    find ./demux.files -type f -name "*.demux.fastq.gz" -exec bash -c "ls  \"\$0\"" " {} \; 
+
  */
 
 process FREEBAYES {
 
-    tag "Calling variants on  $sample_id $barcode file"
+    tag "Calling variants on $sample_id demultiplexed files"
     label 'process_medium'
     publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'copy'
 
@@ -474,23 +489,25 @@ process FREEBAYES {
 
     input:
     path index
-    path bed
-    tuple val(sample_id), val(barcode), path(bam)   
+    tuple val(sample_id), path(bam_folder)
+    path scripts
 
     output:
-    tuple val(sample_id), val(barcode), path("*.vcf"), emit: vcf
-
+    tuple val(sample_id), path("variant.files.tar.gz"), emit: variants_folder
 
     script:
     """
-    freebayes \\
-        --min-alternate-fraction 0.6 \\
-        --min-mapping-quality 20  \\
-        --min-base-quality 20 \\
-        --use-best-n-alleles 3 \\
-        -f $index \\
-        $bam \\
-        > ${sample_id}_${barcode}.vcf
+    tar -xf ${bam_folder}
+
+    # iterate through each file in the tar directory 
+    find ./bam.files -type f -name "*.sorted.bam" -exec ${scripts}/run_freebayes.sh ${index} \\{\\} \\;
+
+    # cleanup
+    mkdir ./variant.files
+    mv *{.vcf,.vcf.err} ./variant.files
+    
+    # compress files
+    tar -vcf variant.files.tar.gz ./variant.files/
     """
 }
 
@@ -507,7 +524,7 @@ process FREEBAYES {
 
 process BCFTOOLS_MPILEUP_CALL {
 
-    tag "Calling variants on demultiplexed files"
+    tag "Calling variants on $sample_id demultiplexed files"
     label 'process_medium'
     publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'copy'
 
@@ -518,23 +535,25 @@ process BCFTOOLS_MPILEUP_CALL {
 
     input:
     path index
-    tuple val(sample_id), val(barcode), path(bam)   
+    tuple val(sample_id), path(bam_folder)
+    path scripts 
 
     output:
-    tuple val(sample_id), val(barcode), path("*.bcf"), emit: vcf
-  
+    tuple val(sample_id), path("variant.files.tar.gz"), emit: variants_folder
+
     script:
     """
-    bcftools mpileup \\
-        -I -Ou \\
-        -f $index \\
-        $bam \\
-        | bcftools call \\
-        --ploidy 2 \\
-        --skip-variants indels \\
-        --consensus-caller \\
-        --variants-only \\
-        -Ou -o ${sample_id}_${barcode}.bcf
+    tar -xf ${bam_folder}
+
+    # iterate through each file in the tar directory 
+    find ./bam.files -type f -name "*.sorted.bam" -exec ${scripts}/run_bcftools.sh ${index} \\{\\} \\;
+
+    # cleanup
+    mkdir ./variant.files
+    mv *{.bcf,.bcf.err} ./variant.files
+    
+    # compress files
+    tar -vcf variant.files.tar.gz ./variant.files/
     """
 }
 
@@ -548,7 +567,7 @@ process BCFTOOLS_MPILEUP_CALL {
 // improve target option here by modifying above
 
 process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
-    tag "Removing off-target & low-support variants. Normalizing variants in files"
+    tag "Removing low-support & normalising variants"
     label 'process_medium'
     publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/$sample_id", mode:'copy'
 
@@ -559,26 +578,25 @@ process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
     
     input:
     path fasta
-    path bed
-    tuple val(sample_id), val(barcode), path(vcf) 
+    tuple val(sample_id), path(variants_folder)
+    path scripts 
 
     output:
-    tuple val(sample_id), path("*.norm.bcf"), emit: vcf, optional: true
-    tuple val(sample_id), path("*.norm.bcf.csi"), emit: idx, optional: true
-  
+    tuple val(sample_id), path("norm.files.tar.gz"), emit: norm_variants_folder
 
     script:
     """
-    # exit status 0; if SNPs detected process VCF
-    if bcftools view  $vcf | grep -qv '^#'
-    then
-        bcftools view -q 0.6:nref $vcf -Ou | \\
-        bcftools annotate --set-id "${sample_id}_${barcode}" |  \\
-        bcftools norm --fasta-ref $fasta -Ob -o ${sample_id}_${barcode}.norm.bcf
+    tar -xf ${variants_folder}
 
-        #create tbi index of file
-        bcftools index ${sample_id}_${barcode}.norm.bcf
-    fi
+    # iterate through each vcf/bcf file 
+    find variant.files/ -type f \\( -name "*.bcf" -o -name "*.vcf" \\) -exec ${scripts}/run_bcftools_norm.sh ${fasta} \\{\\} \\;
+
+    # cleanup
+    mkdir ./norm.files
+    mv *{.norm.bcf,.norm.bcf.csi} ./norm.files
+    
+    # compress files
+    tar -vcf norm.files.tar.gz ./norm.files/
     """
 
 }
@@ -597,13 +615,15 @@ process BCFTOOLS_CONCAT {
         'quay.io/biocontainers/bcftools:1.17--haef29d1_0' }"
 
     input:
-    tuple val(sample_id), path(vcfs), path(idxs)
+    tuple val(sample_id), path(norm_variants_folder)
 
     output:
     tuple val(sample_id), path("*.combined.vcf"), emit: vcf
 
     script:
     """
+    tar -xf ${norm_variants_folder}
+
     # create list of input files
     find -L ./ -name "*.norm.bcf" > vcfs_list
     
@@ -620,7 +640,7 @@ process BCFTOOLS_CONCAT {
  */
 
 process SNPEFF_ANNO {
-    tag "Annotating variants in $sample_id $barcode"
+    tag "Annotating variants in $sample_id"
     label 'process_medium'
     publishDir "${params.outdir}/annotation/snpeff/${params.caller}/$sample_id", mode:'copy'
 
@@ -634,10 +654,10 @@ process SNPEFF_ANNO {
     path snpeff_config //path snpeff_config make optional as already available through db path
     val reference_v
     tuple val(sample_id), path(vcf)
-    //tuple val(sample_id), val(barcode), path(vcf)
 
     output:
     tuple val(sample_id), path("*.ann.vcf"), emit: ann_vcf
+    tuple val(sample_id), path("*.snpEff_summary.html"), emit: ann_html
 
     script:
     def avail_mem = 6144
@@ -654,31 +674,10 @@ process SNPEFF_ANNO {
         -csvStats -hgvs \\
         -noStats \\
      ${vcf} > ${sample_id}.ann.vcf
+
+    mv ./snpEff_summary.html ./${sample_id}.snpEff_summary.html
     """
 }
-
-/*
- * Annotate variants in VCF using VEP
- * HGVS.c and HGVS.p annotation for codon and aa substitutions
- */
-
-// build SNPEff anotation dataabse given reference in genbank format
-
-// process SNPEFF_ANN {
-//     tag "Building SNPeff Annotation DB for $reference gbk file"
-//     publishDir "${params.outdir}/annotation/snpeff/db", mode:'copy'
-
-//    input:
-//    path reference
-//    tuple val(sample_id), val(barcode), path(bam)   
-
-//    output:
-//    tuple val(sample_id), val(barcode), path("mpileup/*.bcftools.raw.bcf")
-//    tuple val(sample_id), val(barcode), path("call/*.bcftools.vcf"), emit: vcf
-  
-
-
-// }
 
 /*
  * raw file multiqc report
@@ -799,37 +798,31 @@ workflow {
     //combine input channels by sample keys
     demulti_ch = DEMULTIPLEX_BARCODES(trimmed_reads_ch.trimmed_reads.combine(clean_clustered_umi_ch.clusters_file, by:0), scripts_ch)
 
+    // take the output dir 
 
-    grouped_by_sample_barcode = demulti_ch.demux_reads.flatMap { sample, files -> files.collect { [sample, it] } } //flatMap transform ch into flattened [sample, file_path] tuples chs.
-        .map { sample, file_path -> //create new tuple using map
-        def matcher = (file_path =~ /.*\/(.*)_(.*)\.demux\.fastq\.gz/) //capture both barcode & sample groups
-        def (barcode, sample_id) = matcher ? [matcher[0][1], matcher[0][2]] : null
-    return tuple(sample_id, barcode, file_path)
-    }
+    //grouped_by_sample_barcode = demulti_ch.demux_reads.flatMap { sample, files -> files.collect { [sample, it] } } //flatMap transform ch into flattened [sample, file_path] tuples chs.
+    //    .map { sample, file_path -> //create new tuple using map
+    //    def matcher = (file_path =~ /.*\/(.*)_(.*)\.demux\.fastq\.gz/) //capture both barcode & sample groups
+    //  def (barcode, sample_id) = matcher ? [matcher[0][1], matcher[0][2]] : null
+    //return tuple(sample_id, barcode, file_path)
+    //}
     
-    bam_ch = BWA_MEM_ALIGN(index_ch,grouped_by_sample_barcode)
+    //bam_ch = BWA_MEM_ALIGN(index_ch,grouped_by_sample_barcode)
+    bam_ch = BWA_MEM_ALIGN(index_ch,demulti_ch.demux_folder,scripts_ch)
 
     // calling
     if (params.caller == 'freebayes') {
-        vcf_ch = FREEBAYES(reference_ch, bed_ch, bam_ch.sorted_bam)
+        vcf_ch = FREEBAYES(reference_ch, bam_ch.bam_folder, scripts_ch)
     } else if (params.caller == 'bcftools') {
-        vcf_ch = BCFTOOLS_MPILEUP_CALL(reference_ch, bam_ch.sorted_bam)
+        vcf_ch = BCFTOOLS_MPILEUP_CALL(reference_ch, bam_ch.bam_folder, scripts_ch)
     }
 
     // filter off-target variants those with lower read support. annotate ID col with sample_barcode and normalise variants (left align, max parisomony representation) 
-    norm_vcf_ch = BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX(reference_ch, bed_ch, vcf_ch.vcf)
-
-    
-    // collapse vcf & indx files into a single channel per sample
-    // tuple w 3 values: samplename, vcf, idx
-    comb_ch = norm_vcf_ch.vcf.groupTuple()
-    .combine(norm_vcf_ch.idx.groupTuple(), by:0)
-  //.buffer(size: 100000, remainder: true) #if still issues, rbeak each channel into a subset to reduce
+    norm_vcf_ch = BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX(reference_ch, vcf_ch.variants_folder, scripts_ch)
 
 
     // concatenate variants in vcf files
-    // buffer(size: 10, remainder: true)
-    vcf_concat_ch = BCFTOOLS_CONCAT(comb_ch)
+    vcf_concat_ch = BCFTOOLS_CONCAT(norm_vcf_ch.norm_variants_folder)
 
     // annotate comb variants file w snpEff
     ann_ch = SNPEFF_ANNO(snpeff_db_ch, snpeff_config_ch, reference_gbk_ch, vcf_concat_ch.vcf)
