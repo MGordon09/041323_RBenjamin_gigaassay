@@ -49,8 +49,11 @@ Mainly we want to see how the vcf merging works; think we were filtering reads t
 Issue with nextflow process when generating large number of files: see slack issue for details: https://nextflow.slack.com/archives/C02T98A23U7/p1695673765111919
 Solution for now is to compress output in dir and move that around, then iterate through the files in each work dir
 
+04/10/23
+----
+Run the pipeline with 
 
 TODO
 ---
 Modularise the pipeline
-Create module config to specify params for each module
+

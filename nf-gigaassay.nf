@@ -460,7 +460,8 @@ process BWA_MEM_ALIGN {
 
     # cleanup
     mkdir ./bam.files
-    mv *{bwa.err,sorted.bam} ./bam.files
+    find . -type f \\( -name "*.bwa.err" -o -name "*.sorted.bam" \\) -exec mv \\{\\} ./bam.files \\;
+    #mv *{bwa.err,sorted.bam} ./bam.files
     
     # compress files
     tar -vcf bam.files.tar.gz ./bam.files/
@@ -504,7 +505,9 @@ process FREEBAYES {
 
     # cleanup
     mkdir ./variant.files
-    mv *{.vcf,.vcf.err} ./variant.files
+    find . -type f -name "*.vcf*" -exec mv \\{\\} ./variant.files \\;
+
+    #mv *{.vcf,.vcf.err} ./variant.files
     
     # compress files
     tar -vcf variant.files.tar.gz ./variant.files/
@@ -550,7 +553,8 @@ process BCFTOOLS_MPILEUP_CALL {
 
     # cleanup
     mkdir ./variant.files
-    mv *{.bcf,.bcf.err} ./variant.files
+    find . -type f -name "*.bcf*" -exec mv \\{\\} ./variant.files \\;
+    #mv *{.bcf,.bcf.err} ./variant.files
     
     # compress files
     tar -vcf variant.files.tar.gz ./variant.files/
@@ -593,7 +597,8 @@ process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
 
     # cleanup
     mkdir ./norm.files
-    mv *{.norm.bcf,.norm.bcf.csi} ./norm.files
+    find . -type f -name "*.norm.bcf*" -exec mv \\{\\} ./norm.files \\;
+    #mv *{.norm.bcf,.norm.bcf.csi} ./norm.files
     
     # compress files
     tar -vcf norm.files.tar.gz ./norm.files/
