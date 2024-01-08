@@ -27,7 +27,7 @@ params.scripts = "$projectDir/bin" // scripts for pipeline here
 params.reference = "$projectDir/docs/AF324493.2.fa" // maybe look at building the reference 
 params.reference_gbk = "AF324493.2" //reference genbank accession no
 params.bed ="$projectDir/docs/intervals.bed" // genomic interval (0-based) for tat 
-params.min_cluster_size = 3 // minimum number of reads per cluster.. need to find sensible number. For this amount of data is 5 good? To use all just input 1 here
+params.min_cluster_size = 3 // minimum number of reads per cluster.. To use all just input 1 here
 params.snpeff_db = "$projectDir/docs/AF324493.2"
 params.snpeff_config = "$projectDir/docs/snpEff.config"
 // params.multiqc = 
@@ -392,7 +392,7 @@ process FILTER_CLUSTERS {
 
 process DEMULTIPLEX_BARCODES {
     tag "Demultiplex $sample_id fastq files"
-    label 'process_medium'
+    label 'process_long'
     publishDir "${params.outdir}/clustering/reads/$sample_id", mode:'copy'
 
     conda "conda-forge::python=3.9.5"
@@ -435,7 +435,7 @@ process DEMULTIPLEX_BARCODES {
 
 process BWA_MEM_ALIGN {
     tag"Aligning $sample_id fastqs against $index"
-    label 'process_medium'
+    label 'process_long'
     publishDir "${params.outdir}/alignment/bwa-mem/$sample_id", mode:'copy'
 
     conda "bioconda::mulled-v2-fe8faa35dbf6dc65a0f7f5d4ea12e31a79f73e40==c56a3aabc8d64e52d5b9da1e8ecec2031668596d-0"
@@ -480,7 +480,7 @@ process BWA_MEM_ALIGN {
 process FREEBAYES {
 
     tag "Calling variants on $sample_id demultiplexed files"
-    label 'process_medium'
+    label 'process_long'
     publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'copy'
 
     conda "bioconda::freebayes=1.3.6"
@@ -528,7 +528,7 @@ process FREEBAYES {
 process BCFTOOLS_MPILEUP_CALL {
 
     tag "Calling variants on $sample_id demultiplexed files"
-    label 'process_medium'
+    label 'process_long'
     publishDir "${params.outdir}/calling/${params.caller}/$sample_id", mode:'copy'
 
     conda "bioconda::bcftools=1.17"
@@ -572,7 +572,7 @@ process BCFTOOLS_MPILEUP_CALL {
 
 process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
     tag "Removing low-support & normalising variants"
-    label 'process_medium'
+    label 'process_long'
     publishDir "${params.outdir}/annotation/bcftools/norm/${params.caller}/$sample_id", mode:'copy'
 
     conda "bioconda::bcftools=1.17"
@@ -611,7 +611,7 @@ process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
 
 process BCFTOOLS_CONCAT {
     tag " Concatenating sample $sample_id vcfs"
-    label 'process_low'
+    label 'process_high'
     publishDir "${params.outdir}/annotation/bcftools/concat/${params.caller}/$sample_id", mode:'copy'
 
     conda "bioconda::bcftools=1.17"
@@ -621,21 +621,34 @@ process BCFTOOLS_CONCAT {
 
     input:
     tuple val(sample_id), path(norm_variants_folder)
+    path scripts 
 
     output:
     tuple val(sample_id), path("*.combined.vcf"), emit: vcf
 
     script:
     """
+    # set current wd tmpdir for bcftools tmp file creation
+    export TMPDIR=./
+
     tar -xf ${norm_variants_folder}
 
     # create list of input files
-    find -L ./ -name "*.norm.bcf" > vcfs_list
+    find -L . -name "*.norm.bcf" > vcfs_list 
+
+    #split the input file list into chunks of 1k vcf files for processing 
+    split -l 1000 ./vcfs_list vcfs_subset 
     
+    # process each batch of 1k files
+    find . -type f -name "vcfs_subset*" -exec ${scripts}/run_bcftools_concat.sh ${sample_id} \\{\\} \\;
+
+    # now combine the subsets
+    find -L . -name "*subset.vcf.gz" > vcfsubset_list 
+
     bcftools concat \\
         --allow-overlaps \\
-        --file-list ./vcfs_list \\
-        --output ${sample_id}.norm.combined.vcf
+        --file-list ./vcfsubset_list \\
+    | bcftools sort -o ${sample_id}.norm.combined.vcf
     """
 }
 
@@ -655,6 +668,7 @@ process SNPEFF_ANNO {
         'quay.io/biocontainers/snpeff:5.1--hdfd78af_2' }"
 
     input:
+    path bed
     path snpeff_db
     path snpeff_config //path snpeff_config make optional as already available through db path
     val reference_v
@@ -673,9 +687,11 @@ process SNPEFF_ANNO {
     }
     """  
     snpEff ann  \\
+        -interval $bed \\
         -Xmx${avail_mem}M \\
         -nodownload -v ${reference_v} \\
         -c ${snpeff_config} \\
+        -no-downstream -no-intergenic -no-intron -no-upstream -no-utr \\
         -csvStats -hgvs \\
         -noStats \\
      ${vcf} > ${sample_id}.ann.vcf
@@ -827,10 +843,10 @@ workflow {
 
 
     // concatenate variants in vcf files
-    vcf_concat_ch = BCFTOOLS_CONCAT(norm_vcf_ch.norm_variants_folder)
+    vcf_concat_ch = BCFTOOLS_CONCAT(norm_vcf_ch.norm_variants_folder, scripts_ch)
 
     // annotate comb variants file w snpEff
-    ann_ch = SNPEFF_ANNO(snpeff_db_ch, snpeff_config_ch, reference_gbk_ch, vcf_concat_ch.vcf)
+    ann_ch = SNPEFF_ANNO(bed_ch, snpeff_db_ch, snpeff_config_ch, reference_gbk_ch, vcf_concat_ch.vcf)
 
     MULTIQC_RAW(multiqc_input_ch.collect())
 

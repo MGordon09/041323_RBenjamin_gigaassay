@@ -51,7 +51,12 @@ Solution for now is to compress output in dir and move that around, then iterate
 
 04/10/23
 ----
-Run the pipeline with 
+Pipeline running successfully, up to the concatenation step
+Failed due to large number of files loaded; retry tomorrow to complete the test
+Now just need to split the directory of vcfs into batches, loop through those 
+
+test nf-pipeline with scri[t in test dir
+remember to set the tmpdirectory when executing
 
 TODO
 ---

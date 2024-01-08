@@ -24,7 +24,7 @@ bcftools mpileup \
     -f $REFERENCE \
     $BAM \
 | bcftools call \
-    --ploidy 2 \
+    --ploidy 1 \
     --skip-variants indels \
     --consensus-caller \
     --variants-only \

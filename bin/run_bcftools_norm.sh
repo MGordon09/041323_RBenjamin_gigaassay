@@ -22,7 +22,8 @@ BARCODE_ID="${BARCODE_ID%%.*}"
 
 if bcftools view  $VCF | grep -qv '^#'
 then
-    bcftools view -q 0.6:nref $VCF -Ou | \
+    #bcftools view -q 0.6:nref $VCF -Ou | \ # drop the prop reads filtering
+    bcftools view --targets "AF324493.2:5829-6044,AF324493.2:8368-8414" -q 0.6:nref $VCF -Ou | \
     bcftools annotate --set-id "${SAMPLE_ID}_${BARCODE_ID}" |  \
     bcftools norm --fasta-ref $REFERENCE -Ob -o ${SAMPLE_ID}_${BARCODE_ID}.norm.bcf
 
