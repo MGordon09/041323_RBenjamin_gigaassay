@@ -28,4 +28,4 @@ bcftools mpileup \
     --skip-variants indels \
     --consensus-caller \
     --variants-only \
-    -Ou -o ${SAMPLE_ID}_${BARCODE_ID}.bcf 2> ${SAMPLE_ID}_${BARCODE_ID}.bcf.err
+    -Ou -o ./variant.files/${SAMPLE_ID}_${BARCODE_ID}.bcf 2> ./variant.files/${SAMPLE_ID}_${BARCODE_ID}.bcf.err

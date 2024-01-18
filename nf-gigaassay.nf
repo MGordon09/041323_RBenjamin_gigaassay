@@ -550,15 +550,12 @@ process BWA_MEM_ALIGN {
     """
     tar -xf ${demux_folder}
 
-    # iterate through each file in the directory 
-    #find ./demux.files -type f -name "*.demux.fastq.gz" -exec ${scripts}/run_bwa_mem_align.sh ${task.cpus} \\{\\} \\;
+    #output dir 
+    mkdir -p ./bam.files
 
+    # iterate through files
     find ./${sample_id}_demux -type f -name "*.fastq.gz" -exec ${scripts}/run_bwa_mem_align.sh ${task.cpus} \\{\\} \\;
-    # cleanup
-    mkdir ./bam.files
-    find . -type f \\( -name "*.bwa.err" -o -name "*.sorted.bam" \\) -exec mv \\{\\} ./bam.files \\;
-    #mv *{bwa.err,sorted.bam} ./bam.files
-    
+
     # compress files
     tar -vcf bam.files.tar.gz ./bam.files/
     """
@@ -596,14 +593,11 @@ process FREEBAYES {
     """
     tar -xf ${bam_folder}
 
+    #output dir
+    mkdir -p ./variant.files
+
     # iterate through each file in the tar directory 
     find ./bam.files -type f -name "*.sorted.bam" -exec ${scripts}/run_freebayes.sh ${index} \\{\\} \\;
-
-    # cleanup
-    mkdir ./variant.files
-    find . -type f -name "*.vcf*" -exec mv \\{\\} ./variant.files \\;
-
-    #mv *{.vcf,.vcf.err} ./variant.files
     
     # compress files
     tar -vcf variant.files.tar.gz ./variant.files/
@@ -644,13 +638,11 @@ process BCFTOOLS_MPILEUP_CALL {
     """
     tar -xf ${bam_folder}
 
+    #make output dir
+    mkdir -p ./variant.files
+
     # iterate through each file in the tar directory 
     find ./bam.files -type f -name "*.sorted.bam" -exec ${scripts}/run_bcftools.sh ${index} \\{\\} \\;
-
-    # cleanup
-    mkdir ./variant.files
-    find . -type f -name "*.bcf*" -exec mv \\{\\} ./variant.files \\;
-    #mv *{.bcf,.bcf.err} ./variant.files
     
     # compress files
     tar -vcf variant.files.tar.gz ./variant.files/
@@ -688,14 +680,13 @@ process BCFTOOLS_VIEW_ANNOTATE_NORM_INDEX {
     """
     tar -xf ${variants_folder}
 
+    # make output dir
+    mkdir -p ./norm.files
+
+    echo "start processing"
     # iterate through each vcf/bcf file 
     find variant.files/ -type f \\( -name "*.bcf" -o -name "*.vcf" \\) -exec ${scripts}/run_bcftools_norm.sh ${fasta} \\{\\} \\;
 
-    # cleanup
-    mkdir ./norm.files
-    find . -type f -name "*.norm.bcf*" -exec mv \\{\\} ./norm.files \\;
-    #mv *{.norm.bcf,.norm.bcf.csi} ./norm.files
-    
     # compress files
     tar -vcf norm.files.tar.gz ./norm.files/
     """

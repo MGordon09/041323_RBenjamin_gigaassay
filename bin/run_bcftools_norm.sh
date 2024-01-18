@@ -20,13 +20,15 @@ SAMPLE_ID="${FILE%%_*}" #extract the barcode from file name
 BARCODE_ID="${FILE#*_}" # extract everything after _ and strip extension
 BARCODE_ID="${BARCODE_ID%%.*}"
 
+#  block executed only for vcf with records 
 if bcftools view  $VCF | grep -qv '^#'
 then
     #bcftools view -q 0.6:nref $VCF -Ou | \ # drop the prop reads filtering
     bcftools view --targets "AF324493.2:5829-6044,AF324493.2:8368-8414" -q 0.6:nref $VCF -Ou | \
     bcftools annotate --set-id "${SAMPLE_ID}_${BARCODE_ID}" |  \
-    bcftools norm --fasta-ref $REFERENCE -Ob -o ${SAMPLE_ID}_${BARCODE_ID}.norm.bcf
+    bcftools norm --fasta-ref $REFERENCE -Ob -o ./norm.files/${SAMPLE_ID}_${BARCODE_ID}.norm.bcf
 
-    #create tbi index of file
-    bcftools index ${SAMPLE_ID}_${BARCODE_ID}.norm.bcf
+    #creat index of vcf file
+    bcftools index ./norm.files/${SAMPLE_ID}_${BARCODE_ID}.norm.bcf \
+    -o ./norm.files/${SAMPLE_ID}_${BARCODE_ID}.norm.bcf.csi
 fi

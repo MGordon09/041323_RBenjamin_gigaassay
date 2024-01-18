@@ -26,4 +26,4 @@ freebayes \
     --min-base-quality 20 \
     --use-best-n-alleles 3 \
     -f $REFERENCE \
-    $BAM > ${SAMPLE_ID}_${BARCODE_ID}.vcf 2> ${SAMPLE_ID}_${BARCODE_ID}.vcf.err
+    $BAM > ./variant.files/${SAMPLE_ID}_${BARCODE_ID}.vcf 2> ./variant.files/${SAMPLE_ID}_${BARCODE_ID}.vcf.err

@@ -81,7 +81,8 @@ now looks to be running.. now take the output and split into 4 channels; one per
 
 
 #TODO
-continue with the pipeline
-within the sample level, could we look at batching? for example split each sample into 10 groups of equally sized batches and submit to the subsequent processes?
+looks good; test on full set of data
+keep an eye on variant calling params; maybe better to call everything then filter downstream?
+improvement: write python script to take in output of clustering and clustering barcode, search for the then demux by name?
+within the sample level, could we look at batching to process in parallel? for example split each sample into 10 groups of equally sized batches and submit to the subsequent processes?
 may be issues with the bash limits and argument sizes (ls etc..), but if subdividing into say 10-100 batches per sample, perhaps not an issue.. would solving this reduce the runtime?
-new process looks close, but not all of the files are copied over.. A couple of options, run the pipeline per barcode and create output and zip, or 

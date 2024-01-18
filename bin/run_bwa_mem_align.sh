@@ -14,14 +14,14 @@ READS=$2
 
 # extract sample id and barcode from read name
 FILE="$(basename $READS)"
-BARCODE_ID="${FILE%%_*}" #extract the barcode from file name
-SAMPLE_ID="${FILE#*_}" # extract everything after _ and strip extension
-SAMPLE_ID="${SAMPLE_ID%%.*}"
+SAMPLE_ID="${FILE%%_*}" #extract the sample name
+BARCODE_ID="${FILE#*_}" # extract everything after _ and strip extension
+BARCODE_ID="${BARCODE_ID%%.*}" # remove file suffix to 
 
 # bwa mem index
 INDEX_FLDR=$(find -L ./ -name "*.amb" | sed 's/.amb$//')
 
 bwa mem \
     -t $RESOURCES -R "@RG\\tID:${BARCODE_ID}\\tSM:${SAMPLE_ID}\\tPL:Illumina" \
-    $INDEX_FLDR 2> ${SAMPLE_ID}_${BARCODE_ID}.bwa.err $READS \
-    | samtools sort -@ $RESOURCES -O bam -o ${SAMPLE_ID}_${BARCODE_ID}.sorted.bam
+    $INDEX_FLDR 2> ./bam.files/${SAMPLE_ID}_${BARCODE_ID}.bwa.err $READS \
+    | samtools sort -@ $RESOURCES -O bam -o ./bam.files/${SAMPLE_ID}_${BARCODE_ID}.sorted.bam
