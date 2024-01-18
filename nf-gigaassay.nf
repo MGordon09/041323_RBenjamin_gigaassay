@@ -274,9 +274,44 @@ process CUTADAPT_TRIM {
     """
 }
 
+/*
+ * add sample name to fastq header; needed for later demultiplexing steps
+ */
+
+process PASTE_SAMPLEINFO { //optimise memory usage
+    tag "Adding $sample_id to fastq headers"
+    label 'process_low'
+    publishDir "${params.outdir}/preprocessing/paste_IDs", mode: 'copy'
+
+    conda "conda-forge::python=3.9.5"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/python:3.9--1' :
+        'quay.io/biocontainers/python:3.9--1' }"
+
+    input:
+    tuple val(sample_id), path(reads)
+    path scripts
+
+    output:
+    tuple val(sample_id), path("*_reformat.fastq.gz"), emit: merged_reads
+    tuple val(sample_id), path("*_pasteIds.log")
+
+    script:
+    """
+    python ${scripts}/pasteSampleNametoHeader.py \\
+        --fastq_path ${reads} \\
+        --sample_name ${sample_id} \\
+        --output_dir '.' \\
+        > ${sample_id}_pasteIds.log
+    """
+}
+
+// here we need to merge the reads from the different samples, and use this to extract the
+
+
 
 /*
- * extract UMIs using flanking sequences and place in read header
+ * extract UMIs using flanking sequences
  * -g both adapters required, filtering by read length to ensure they are equal
  */
 
@@ -295,15 +330,26 @@ process CUTADAPT_UMI {
     val umi_5prime
 
     output:
-    tuple val(sample_id), path("*_umi.fastq.gz"), emit: umi_reads
-    path("*.log")
+    tuple val(sample_id), path("combined.fastq.gz"), path("*_umi.fastq.gz"), emit: umi_reads
+    path("concat.command.log"), emit: concat_order
+    path("sampleID.txt"), emit: sample_IDs
 
     script:
     """
+    # first concatenate the samples and then create a log so we know order of concatenation
+    echo cat $reads > concat.command.log
+    cat $reads > combined.fastq.gz
+
+    # create a list of the sampeIDs for demux later
+    for i in $reads; do
+        sample=\$(echo \${i/_reformat.fastq.gz/})
+        echo \$sample >> sampleID.txt
+    done
+
     cutadapt \\
         --cores $task.cpus \\
         -g ${umi_5prime} \\
-        ${reads} \\
+        combined.fastq.gz \\
         -o ${sample_id}_umi.fastq.gz \\
         --report minimal \\
         > ${sample_id}_cutadapt.log
@@ -327,18 +373,18 @@ process STARCODE_CLUSTERING {
         'quay.io/biocontainers/starcode:1.4--hec16e2b_3' }"
 
     input: 
-    tuple val(sample_id), path(reads)
+    tuple val(sample_id), path(reads), path(umi_reads)
     val l_distance
 
     output:
-    tuple val(sample_id), path("*clusters.txt"), emit: clusters_file
+    tuple val(sample_id), path(reads), path("*clusters.txt"), emit: clusters_file
     path("*clusters.log")
 
     script:
     """
     starcode \\
         --threads $task.cpus \\
-        -i <(cat ${reads} | gzip -cd) \\
+        -i <(cat ${umi_reads} | gzip -cd) \\
         --output ${sample_id}_starcode_umi_clusters.txt \\
         --sphere \\
         --seq-id \\
@@ -364,11 +410,11 @@ process FILTER_CLUSTERS {
         'quay.io/biocontainers/gzip:1.11' }"
 
     input: 
-    tuple val(sample_id), path(clusters_file)
+    tuple val(sample_id), path(reads), path(clusters_file)
     val cluster_size
 
     output:
-    tuple val(sample_id), path("*clusters.clean.txt"), emit: clusters_file
+    tuple val(sample_id), path(reads), path("*clusters.clean.txt"), emit: clusters_file
     path("*clusters.clean.log")
 
 
@@ -427,6 +473,55 @@ process DEMULTIPLEX_BARCODES {
     """
 }
 
+// new process demultiplex samples; using the sample id in each read, write each file out seperately
+// will probably need to put this in a script
+process DEMULTIPLEX_SAMPLES {
+    tag "Demultipling fastq files to sample level info"
+    label 'process_high'
+    publishDir "${params.outdir}/clustering/demux_samples", mode:'copy'
+
+    conda "bioconda::bbmap=39.01"
+    container "${ workflow.containerEngine == 'singularity' && !task.ext.singularity_pull_docker_container ?
+        'https://depot.galaxyproject.org/singularity/bbmap:39.01--h5c4e2a8_0':
+        'quay.io/biocontainers/bbmap:39.01--h5c4e2a8_0' }"
+
+    input:
+    tuple val(sample_id), path(demux_folder)
+    path(sample_ids) // sampleID txt file
+    path(scripts)
+
+    output:
+    //path("*.sample.demux.fastq.gz"), emit: demux_reads
+    path("*_demux.tar.gz"), emit: demux_folder
+    //path("*demux.log")
+
+    script:
+    """
+    maxmem=\$(echo \"$task.memory\"| sed 's/ GB/g/g')
+
+    # decompress folder
+    tar -xf ${demux_folder}
+
+    while read s; do
+        mkdir -p \${s}_demux
+    done < ${sample_ids}
+
+    # iterate through each file in the directory and demultiplex by samplename
+    find ./demux.files -type f -name "*.demux.fastq.gz" -exec ${scripts}/run_bbmap_demuxbyname.sh \$maxmem ${sample_ids} \\{\\} \\;
+
+    #tidy output; paste sampleID to filename and then tar the directory
+    # faster way to do this? if I try all at once exceed bash arg size.. fine for now
+    while read s; do
+        cd \${s}_demux
+        for f in *.fastq.gz; do
+            mv \${f}  \${s}_\${f}
+        done
+        cd -
+        tar -vcf \${s}_demux.tar.gz \${s}_demux/
+    done < ${sample_ids}  
+    """
+}
+
 /*
  * Align each sequence to its reference using  BWA-MEM aligner
  * Assigning read groups with -R indicating $barcode & $sample origin origin.
@@ -455,9 +550,10 @@ process BWA_MEM_ALIGN {
     """
     tar -xf ${demux_folder}
 
-    # iterate through each file in the tar directory 
-    find ./demux.files -type f -name "*.demux.fastq.gz" -exec ${scripts}/run_bwa_mem_align.sh ${task.cpus} \\{\\} \\;
+    # iterate through each file in the directory 
+    #find ./demux.files -type f -name "*.demux.fastq.gz" -exec ${scripts}/run_bwa_mem_align.sh ${task.cpus} \\{\\} \\;
 
+    find ./${sample_id}_demux -type f -name "*.fastq.gz" -exec ${scripts}/run_bwa_mem_align.sh ${task.cpus} \\{\\} \\;
     # cleanup
     mkdir ./bam.files
     find . -type f \\( -name "*.bwa.err" -o -name "*.sorted.bam" \\) -exec mv \\{\\} ./bam.files \\;
@@ -807,7 +903,18 @@ workflow {
     multiqc_input_ch = FASTQC_RAW(read_input_ch)
     merge_reads_ch   = BBMERGE(read_input_ch)
     trimmed_reads_ch = CUTADAPT_TRIM(merge_reads_ch.merged_reads, flank_5_ch, flank_3_ch)
-    umi_reads_ch     = CUTADAPT_UMI(trimmed_reads_ch.trimmed_reads, umi_5_ch)
+    reform_merge_reads_ch   = PASTE_SAMPLEINFO(trimmed_reads_ch.trimmed_reads, scripts_ch)
+
+    // extract the file from the tuple and combine the channels
+    // new tuple w combined id and a list of input files
+    com_reads_ch = reform_merge_reads_ch.merged_reads
+    .map{ sampleid, file -> 
+        def combid = 'combined_samples'
+        return tuple(combid, file) }
+    .groupTuple()
+    //com_reads_ch.view()
+    
+    umi_reads_ch     = CUTADAPT_UMI(com_reads_ch, umi_5_ch)
     
     // cluster umi for each sample
     clustered_umi_ch = STARCODE_CLUSTERING(umi_reads_ch.umi_reads, lev_dist_ch)
@@ -815,11 +922,23 @@ workflow {
     // filter the clusters to only keep clusters with >= n
     clean_clustered_umi_ch = FILTER_CLUSTERS(clustered_umi_ch.clusters_file, min_cluster_size_ch)
 
-
     //combine input channels by sample keys
-    demulti_ch = DEMULTIPLEX_BARCODES(trimmed_reads_ch.trimmed_reads.combine(clean_clustered_umi_ch.clusters_file, by:0), scripts_ch)
+    //demulti_ch = DEMULTIPLEX_BARCODES(trimmed_reads_ch.trimmed_reads.combine(clean_clustered_umi_ch.clusters_file, by:0), scripts_ch)
 
-    // take the output dir 
+    demulti_ch = DEMULTIPLEX_BARCODES(clean_clustered_umi_ch.clusters_file, scripts_ch)
+
+    // now demultiplex by samples; add the demux folder and the sampleIDs
+    demux_samples_ch = DEMULTIPLEX_SAMPLES(demulti_ch.demux_folder, umi_reads_ch.sample_IDs, scripts_ch)
+
+    // 'split' output into one channel per sample
+    demux_singlesample_ch = demux_samples_ch
+    .flatten() //emit each item seperately
+    .map{ file -> 
+          def matcher = (file =~ /.*\/(.*)\_demux\.tar\.gz/) //capture group for sample name
+          //def (fname) = matcher ? [matcher[0][1]] : null
+          def fname = matcher[0][1]
+          return( tuple(fname, file))
+    }
 
     //grouped_by_sample_barcode = demulti_ch.demux_reads.flatMap { sample, files -> files.collect { [sample, it] } } //flatMap transform ch into flattened [sample, file_path] tuples chs.
     //    .map { sample, file_path -> //create new tuple using map
@@ -829,7 +948,9 @@ workflow {
     //}
     
     //bam_ch = BWA_MEM_ALIGN(index_ch,grouped_by_sample_barcode)
-    bam_ch = BWA_MEM_ALIGN(index_ch,demulti_ch.demux_folder,scripts_ch)
+    //bam_ch = BWA_MEM_ALIGN(index_ch,demulti_ch.demux_folder,scripts_ch)
+
+    bam_ch = BWA_MEM_ALIGN(index_ch,demux_singlesample_ch,scripts_ch)
 
     // calling
     if (params.caller == 'freebayes') {

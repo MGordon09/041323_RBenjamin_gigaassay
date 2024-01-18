@@ -55,10 +55,33 @@ Pipeline running successfully, up to the concatenation step
 Failed due to large number of files loaded; retry tomorrow to complete the test
 Now just need to split the directory of vcfs into batches, loop through those 
 
-test nf-pipeline with scri[t in test dir
+test nf-pipeline with script in test dir
 remember to set the tmpdirectory when executing
 
 TODO
 ---
 Modularise the pipeline
 
+To do 
+--
+Write a script to add the sample name to the read header
+
+Completed script to add headers to the merged reads - test the pipeline
+
+Added the combined file to the channels to pass around processes. Now need to write py script to demux files belonging to different samples
+Use seqkit grep for extracting the fastq from each file, how to get sample names? too long to search within fastq, so instead pass the cat command to
+Using the bbmap tool for this as faster 
+
+
+## 
+example command used to run the file and this works in isolation:
+singularity exec -B "/wynton/group/krogan/mgordon/projects" /wynton/group/krogan/mgordon/src/singularity/depot.galaxyproject.org-singularity-bbmap-39.01--h5c4e2a8_0.img demuxbyname.sh in=TCCACGGAGAGCACACACAACACCCTAAGAAA_combined_samples.demux.fastq.gz out=test_%_.fastq.gz prefixmode=f names=work/40/2a30c598befa0bb9539c5c53df3d89/sampleID.txt
+
+now looks to be running.. now take the output and split into 4 channels; one per folder/sample
+
+
+#TODO
+continue with the pipeline
+within the sample level, could we look at batching? for example split each sample into 10 groups of equally sized batches and submit to the subsequent processes?
+may be issues with the bash limits and argument sizes (ls etc..), but if subdividing into say 10-100 batches per sample, perhaps not an issue.. would solving this reduce the runtime?
+new process looks close, but not all of the files are copied over.. A couple of options, run the pipeline per barcode and create output and zip, or 
